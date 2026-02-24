@@ -105,7 +105,7 @@ Free-form:
 `/video_sourcing` deterministic UX behavior:
 
 1. Immediate start message: `Starting video sourcing...`
-2. Throttled middle progress messages when runtime reaches 6+ seconds.
+2. Throttled middle progress messages when runtime reaches 10+ seconds.
 3. Final terminal message (`complete`, `clarification_needed`, or `error`).
 
 ## Troubleshooting

@@ -7,9 +7,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import sys
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, TextIO
@@ -29,6 +31,14 @@ class UxMode(StrEnum):
 
     RAW = "raw"
     THREE_MESSAGE = "three_message"
+
+
+IDLE_POLL_SECONDS = 1.0
+
+
+def monotonic_now() -> float:
+    """Runner-local monotonic clock helper (test-friendly)."""
+    return time.monotonic()
 
 
 def _non_empty_query(value: str) -> str:
@@ -98,7 +108,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--progress-gate-seconds",
         type=_bounded_progress_gate,
-        default=6,
+        default=10,
         help=(
             "Emit throttled progress once elapsed time reaches this threshold, "
             "then at the same interval while running."
@@ -163,6 +173,36 @@ def emit_event(out: TextIO, payload: dict[str, Any]) -> None:
     out.flush()
 
 
+async def poll_stream_event(
+    event_iter: AsyncIterator[Any],
+    *,
+    timeout_seconds: float,
+    state: _StreamPollState,
+) -> Any | None:
+    """Read one stream event with timeout and return None when idle.
+
+    Keeps a persistent pending `anext` task so timeout polling doesn't cancel
+    the stream's next event retrieval.
+    """
+    if state.pending_event_task is None:
+        state.pending_event_task = asyncio.create_task(anext(event_iter))
+
+    done, _pending = await asyncio.wait({state.pending_event_task}, timeout=timeout_seconds)
+    if not done:
+        return None
+
+    task = state.pending_event_task
+    state.pending_event_task = None
+    return task.result()
+
+
+@dataclass
+class _StreamPollState:
+    """State container for non-cancelling async stream polling."""
+
+    pending_event_task: asyncio.Task[Any] | None = None
+
+
 @dataclass
 class _UxState:
     """State container for throttled UX progress mode."""
@@ -193,7 +233,7 @@ class _UxState:
                 self.failure_count += 1
 
     def elapsed_seconds(self, now: float | None = None) -> int:
-        current = time.monotonic() if now is None else now
+        current = monotonic_now() if now is None else now
         return max(0, int(current - self.started_at))
 
     def summary(self) -> str:
@@ -235,7 +275,7 @@ async def run_query_stream(
     max_steps: int | None,
     detail: EventDetail,
     ux_mode: UxMode = UxMode.RAW,
-    progress_gate_seconds: int = 6,
+    progress_gate_seconds: int = 10,
     out: TextIO = sys.stdout,
     err: TextIO = sys.stderr,
 ) -> int:
@@ -244,6 +284,7 @@ async def run_query_stream(
     Returns:
         Process exit code.
     """
+    poll_state: _StreamPollState | None = None
     try:
         if progress_gate_seconds < 1 or progress_gate_seconds > 60:
             raise ValueError("progress_gate_seconds must be in range [1, 60]")
@@ -262,44 +303,63 @@ async def run_query_stream(
                     detail,
                 ),
             )
-            ux_state = _UxState(started_at=time.monotonic())
+            ux_state = _UxState(started_at=monotonic_now())
 
-        async for event in wrapper.stream_query(
+        stream_iter = wrapper.stream_query(
             user_query=query,
             clarification=clarification,
             max_steps=max_steps,
             enable_clarification=True,
-        ):
-            if ux_mode == UxMode.RAW:
+        ).__aiter__()
+        poll_state = _StreamPollState()
+
+        if ux_mode == UxMode.RAW:
+            async for event in stream_iter:
                 payload = format_event(event.event, event.data, detail)
                 emit_event(out, payload)
                 if event.event == "error":
                     saw_error = True
-                continue
+        else:
+            while True:
+                try:
+                    event = await poll_stream_event(
+                        stream_iter,
+                        timeout_seconds=IDLE_POLL_SECONDS,
+                        state=poll_state,
+                    )
+                except StopAsyncIteration:
+                    break
 
-            # Throttled UX mode
-            if event.event == "started":
-                # Ignore wrapper-emitted started; runner already emitted deterministic started.
-                continue
+                if ux_state is None:
+                    ux_state = _UxState(started_at=monotonic_now())
 
-            if ux_state is None:
-                ux_state = _UxState(started_at=time.monotonic())
+                if event is None:
+                    now = monotonic_now()
+                    if ux_state.should_emit_progress(now=now, gate_seconds=progress_gate_seconds):
+                        emit_event(out, ux_state.build_progress_payload(now))
+                        ux_state.mark_progress_emitted(now=now)
+                    continue
 
-            ux_state.absorb_event(event.event, event.data)
-            now = time.monotonic()
+                # Throttled UX mode
+                if event.event == "started":
+                    # Ignore wrapper-emitted started; runner already emitted deterministic started.
+                    continue
 
-            is_terminal = event.event in {"complete", "clarification_needed", "error"}
-            if ux_state.should_emit_progress(now=now, gate_seconds=progress_gate_seconds):
-                emit_event(out, ux_state.build_progress_payload(now))
-                ux_state.mark_progress_emitted(now=now)
+                ux_state.absorb_event(event.event, event.data)
+                now = monotonic_now()
 
-            if is_terminal:
-                payload = format_event(event.event, event.data, detail)
-                emit_event(out, payload)
-                if event.event == "error":
-                    saw_error = True
-                saw_terminal = True
-                break
+                is_terminal = event.event in {"complete", "clarification_needed", "error"}
+                if ux_state.should_emit_progress(now=now, gate_seconds=progress_gate_seconds):
+                    emit_event(out, ux_state.build_progress_payload(now))
+                    ux_state.mark_progress_emitted(now=now)
+
+                if is_terminal:
+                    payload = format_event(event.event, event.data, detail)
+                    emit_event(out, payload)
+                    if event.event == "error":
+                        saw_error = True
+                    saw_terminal = True
+                    break
 
         if ux_mode == UxMode.THREE_MESSAGE and not saw_terminal:
             emit_event(
@@ -328,6 +388,13 @@ async def run_query_stream(
             },
         )
         return 1
+    finally:
+        if poll_state is not None and poll_state.pending_event_task is not None:
+            pending_task = poll_state.pending_event_task
+            if not pending_task.done():
+                pending_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, StopAsyncIteration):
+                await pending_task
 
 
 def main(argv: list[str] | None = None) -> int:
