@@ -32,6 +32,7 @@ require_env_key() {
 }
 
 acquire_lock() {
+  mkdir -p "${MANAGED_BASE_DIR}"
   local wait_seconds=0
   local max_wait_seconds=180
   while ! mkdir "${LOCK_DIR}" 2>/dev/null; do
@@ -93,11 +94,19 @@ resolve_runtime_root() {
     return 0
   fi
 
+  if [[ -f "${BOOTSTRAP_MARKER}" && ! -f "${MANAGED_RELEASE_DIR}/pyproject.toml" ]]; then
+    log_error "Managed runtime is incomplete at ${MANAGED_RELEASE_DIR}; reinitializing."
+    rm -f "${BOOTSTRAP_MARKER}" || true
+  fi
+
   if [[ ! -f "${BOOTSTRAP_MARKER}" ]]; then
     acquire_lock
     if [[ ! -f "${BOOTSTRAP_MARKER}" ]]; then
       bootstrap_managed_runtime
-      touch "${BOOTSTRAP_MARKER}"
+      if ! : > "${BOOTSTRAP_MARKER}"; then
+        log_error "Failed to create bootstrap marker at ${BOOTSTRAP_MARKER}"
+        exit 2
+      fi
     fi
   fi
 
