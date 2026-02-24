@@ -107,7 +107,7 @@ Use this only if you want to run a local checkout instead of managed pinned runt
 `/video_sourcing` deterministic runner mode:
 
 1. Immediate start message.
-2. Throttled progress updates after 6 seconds.
+2. Throttled progress updates after 10 seconds.
 3. Final terminal result (`complete`, `clarification_needed`, `error`).
 
 Free-form behavior remains non-strict.
