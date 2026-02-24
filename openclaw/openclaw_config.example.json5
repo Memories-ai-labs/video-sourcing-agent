@@ -1,0 +1,63 @@
+{
+  // Command registration for /video_sourcing and other skill commands
+  commands: {
+    native: "auto",
+    nativeSkills: "auto",
+    text: true,
+  },
+
+  // Enable channels you use. Keep stream mode on for live progress previews.
+  channels: {
+    telegram: {
+      enabled: true,
+      streamMode: "partial",
+      dmPolicy: "pairing",
+    },
+    discord: {
+      enabled: true,
+      streamMode: "partial",
+      blockStreaming: false,
+    },
+  },
+
+  // Global host environment variables for tool/runtime execution.
+  // Use this as the primary place for API keys.
+  env: {
+    vars: {
+      GOOGLE_API_KEY: "your_google_api_key",
+      YOUTUBE_API_KEY: "your_youtube_data_api_key",
+      MEMORIES_API_KEY: "your_memories_api_key",
+      EXA_API_KEY: "optional_exa_key",
+      APIFY_API_TOKEN: "optional_apify_token",
+    },
+  },
+
+  // Skill-specific config.
+  // VIDEO_SOURCING_AGENT_ROOT is optional: set it only to override managed bootstrap runtime.
+  skills: {
+    entries: {
+      "video-sourcing": {
+        enabled: true,
+        // env: {
+        //   VIDEO_SOURCING_AGENT_ROOT: "/absolute/path/to/local/video-sourcing-agent",
+        // },
+      },
+    },
+  },
+
+  // Restricted runtime profile for this workflow.
+  tools: {
+    allow: ["exec", "process", "read", "memory_search"],
+    deny: ["write", "edit", "apply_patch", "browser", "canvas", "cron", "gateway"],
+  },
+
+  // This skill is intended to run on host runtime (not sandboxed).
+  agents: {
+    defaults: {
+      blockStreamingDefault: "on",
+      sandbox: {
+        mode: "off",
+      },
+    },
+  },
+}

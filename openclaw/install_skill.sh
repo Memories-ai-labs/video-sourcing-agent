@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_SOURCE="${SELF_DIR}/packages/video-sourcing-openclaw-skill/skills/video-sourcing"
+OPENCLAW_HOME_DIR="${OPENCLAW_HOME:-${HOME}/.openclaw}"
+TARGET_SKILLS_DIR="${OPENCLAW_HOME_DIR}/skills"
+TARGET_SKILL_DIR="${TARGET_SKILLS_DIR}/video-sourcing"
+MODE="${1:-link}"
+
+if [[ ! -d "${SKILL_SOURCE}" ]]; then
+  echo "Skill source not found: ${SKILL_SOURCE}" >&2
+  exit 1
+fi
+
+mkdir -p "${TARGET_SKILLS_DIR}"
+rm -rf "${TARGET_SKILL_DIR}"
+
+if [[ "${MODE}" == "--copy" ]]; then
+  cp -R "${SKILL_SOURCE}" "${TARGET_SKILL_DIR}"
+  echo "Installed skill by copy to ${TARGET_SKILL_DIR}"
+else
+  ln -s "${SKILL_SOURCE}" "${TARGET_SKILL_DIR}"
+  echo "Installed skill by symlink to ${TARGET_SKILL_DIR}"
+fi
+
+cat <<'EOF'
+Next steps:
+1. Ensure GOOGLE_API_KEY and YOUTUBE_API_KEY are set in OpenClaw global env vars.
+2. Ensure git and uv are installed on the OpenClaw host.
+3. Enable skills.entries["video-sourcing"].enabled=true in openclaw.json.
+4. Optional: set skills.entries["video-sourcing"].env.VIDEO_SOURCING_AGENT_ROOT to override managed bootstrap path.
+5. Use /video_sourcing <query> in your messaging channel.
+EOF
