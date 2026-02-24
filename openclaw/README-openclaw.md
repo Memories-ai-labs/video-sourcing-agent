@@ -5,8 +5,8 @@ This integration installs the `video-sourcing` skill for OpenClaw and runs a pin
 Default runtime source:
 
 - `https://github.com/Memories-ai-labs/video-sourcing-agent`
-- pinned tag: `v0.2.0`
-- managed path: `~/.openclaw/data/video-sourcing-agent/v0.2.0`
+- pinned tag: `v0.2.3`
+- managed path: `~/.openclaw/data/video-sourcing-agent/v0.2.3`
 
 `VIDEO_SOURCING_AGENT_ROOT` is optional and only needed when you want to override the managed runtime with a local checkout.
 
@@ -115,7 +115,7 @@ Free-form:
 2. Missing required API keys
    - Set `GOOGLE_API_KEY` and `YOUTUBE_API_KEY` in global `env.vars`.
 3. Bootstrap clone/sync failures
-   - Verify host network access to GitHub and that tag `v0.2.0` exists.
+   - Verify host network access to GitHub and that tag `v0.2.3` exists.
 4. `/video_sourcing` returns only final response without progress
    - Restart OpenClaw Gateway after skill updates.
 5. Override path invalid

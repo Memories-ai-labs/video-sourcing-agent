@@ -5,8 +5,8 @@ Standalone OpenClaw skill package for deterministic self-bootstrap execution.
 Default runtime source:
 
 - `https://github.com/Memories-ai-labs/video-sourcing-agent`
-- pinned tag: `v0.2.0`
-- managed path: `~/.openclaw/data/video-sourcing-agent/v0.2.0`
+- pinned tag: `v0.2.3`
+- managed path: `~/.openclaw/data/video-sourcing-agent/v0.2.3`
 
 `VIDEO_SOURCING_AGENT_ROOT` is optional and only for local development override.
 
@@ -119,6 +119,6 @@ Free-form behavior remains non-strict.
 2. `Required environment variable is not set: GOOGLE_API_KEY` / `YOUTUBE_API_KEY`
    - Add required keys in global env vars.
 3. Clone/sync errors during first run
-   - Confirm host can access GitHub and fetch tag `v0.2.0`.
+   - Confirm host can access GitHub and fetch tag `v0.2.3`.
 4. No progress updates shown
    - Restart gateway and verify channel stream mode settings.

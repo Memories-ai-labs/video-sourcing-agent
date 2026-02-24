@@ -2,7 +2,7 @@
 set -euo pipefail
 
 PINNED_REPO_URL="https://github.com/Memories-ai-labs/video-sourcing-agent.git"
-PINNED_TAG="v0.2.0"
+PINNED_TAG="v0.2.3"
 
 OPENCLAW_HOME_DIR="${OPENCLAW_HOME:-${HOME}/.openclaw}"
 MANAGED_BASE_DIR="${OPENCLAW_HOME_DIR}/data/video-sourcing-agent"
