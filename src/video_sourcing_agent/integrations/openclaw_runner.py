@@ -34,6 +34,8 @@ class UxMode(StrEnum):
 
 
 IDLE_POLL_SECONDS = 1.0
+STARTING_STAGE_MESSAGE = "Starting video sourcing..."
+PROGRESS_STAGE_PLACEHOLDER = "In progress..."
 
 
 def monotonic_now() -> float:
@@ -208,7 +210,8 @@ class _UxState:
     """State container for throttled UX progress mode."""
 
     started_at: float
-    latest_stage: str = "Starting video sourcing..."
+    latest_stage: str = STARTING_STAGE_MESSAGE
+    has_progress_stage: bool = False
     success_count: int = 0
     failure_count: int = 0
     tools_seen: list[str] = field(default_factory=list)
@@ -223,6 +226,7 @@ class _UxState:
             message = data.get("message")
             if isinstance(message, str) and message.strip():
                 self.latest_stage = message.strip()
+                self.has_progress_stage = True
         elif event == "tool_call":
             self.add_tool(data.get("tool") if isinstance(data.get("tool"), str) else None)
         elif event == "tool_result":
@@ -237,11 +241,14 @@ class _UxState:
         return max(0, int(current - self.started_at))
 
     def summary(self) -> str:
-        tools = ", ".join(self.tools_seen[:4]) if self.tools_seen else "none yet"
-        return (
-            f"{self.latest_stage} | tools: {tools} | "
-            f"success: {self.success_count} | failed: {self.failure_count}"
-        )
+        parts = [self._formatted_stage()]
+        if self.tools_seen:
+            parts.append(f"tools: {', '.join(self.tools_seen[:4])}")
+        if self.success_count > 0:
+            parts.append(f"success: {self.success_count}")
+        if self.failure_count > 0:
+            parts.append(f"failed: {self.failure_count}")
+        return " | ".join(parts)
 
     def build_progress_payload(self, now: float | None = None) -> dict[str, Any]:
         elapsed_seconds = self.elapsed_seconds(now)
@@ -249,7 +256,7 @@ class _UxState:
             "event": "ux_progress",
             "data": {
                 "elapsed_seconds": elapsed_seconds,
-                "stage": self.latest_stage,
+                "stage": self._formatted_stage(),
                 "tools_seen": self.tools_seen,
                 "success_count": self.success_count,
                 "failure_count": self.failure_count,
@@ -266,6 +273,13 @@ class _UxState:
 
     def mark_progress_emitted(self, *, now: float) -> None:
         self.last_progress_emit_at = now
+
+    def _formatted_stage(self) -> str:
+        if not self.has_progress_stage:
+            return PROGRESS_STAGE_PLACEHOLDER
+        if self.latest_stage == STARTING_STAGE_MESSAGE:
+            return PROGRESS_STAGE_PLACEHOLDER
+        return self.latest_stage or PROGRESS_STAGE_PLACEHOLDER
 
 
 async def run_query_stream(

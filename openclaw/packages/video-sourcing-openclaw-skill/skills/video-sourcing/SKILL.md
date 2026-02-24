@@ -41,8 +41,9 @@ If `/video_sourcing` is used with no query body, ask for the missing query.
    - `started` => send: `Starting video sourcing...`
    - `ux_progress` => send concise middle progress updates from `summary` (throttled by runner)
      Send each `ux_progress` as a separate assistant message in Telegram.
-   - terminal event (`complete`, `clarification_needed`, `error`) => send final message
+   - terminal event (`complete`, `clarification_needed`, `error`) => send final message as-is
 5. Do not forward raw `progress`, `tool_call`, or `tool_result` events for `/video_sourcing`.
+6. Do not rewrite final answer tone/style; preserve the user's existing OpenClaw personality behavior.
 
 Behavior target for `/video_sourcing`:
 

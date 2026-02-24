@@ -250,6 +250,36 @@ class NoTerminalWrapper:
         })
 
 
+def test_ux_state_summary_is_minimal_and_conditional():
+    """Summary should only include sections with meaningful data."""
+    state = openclaw_runner._UxState(started_at=0.0)
+
+    assert state.summary() == openclaw_runner.PROGRESS_STAGE_PLACEHOLDER
+
+    state.absorb_event("progress", {"message": "Searching platforms"})
+    assert state.summary() == "Searching platforms"
+
+    state.absorb_event("tool_call", {"tool": "youtube_search"})
+    assert state.summary() == "Searching platforms | tools: youtube_search"
+
+    state.absorb_event("tool_result", {"tool": "youtube_search", "success": True})
+    assert state.summary() == "Searching platforms | tools: youtube_search | success: 1"
+
+    state.absorb_event("tool_result", {"tool": "exa_search", "success": False})
+    assert state.summary() == (
+        "Searching platforms | tools: youtube_search, exa_search | success: 1 | failed: 1"
+    )
+
+
+def test_ux_state_never_reuses_starting_message_in_summary():
+    """Starting label should remain reserved for the first deterministic message."""
+    state = openclaw_runner._UxState(started_at=0.0)
+    state.absorb_event("progress", {"message": openclaw_runner.STARTING_STAGE_MESSAGE})
+
+    assert state.summary() == openclaw_runner.PROGRESS_STAGE_PLACEHOLDER
+    assert openclaw_runner.STARTING_STAGE_MESSAGE not in state.summary()
+
+
 @pytest.mark.asyncio
 async def test_event_ordering_and_json_validity(monkeypatch: pytest.MonkeyPatch):
     """Runner should emit valid NDJSON in expected event order."""
@@ -483,6 +513,7 @@ async def test_three_message_slow_run_emits_multiple_progress_updates(
     assert first_middle["tools_seen"] == ["youtube_search"]
     assert first_middle["success_count"] == 0
     assert first_middle["failure_count"] == 0
+    assert first_middle["summary"] == "Searching platforms | tools: youtube_search"
 
     second_middle = payloads[2]["data"]
     assert isinstance(second_middle, dict)
@@ -490,6 +521,7 @@ async def test_three_message_slow_run_emits_multiple_progress_updates(
     assert second_middle["tools_seen"] == ["youtube_search", "exa_search"]
     assert second_middle["success_count"] == 1
     assert second_middle["failure_count"] == 0
+    assert second_middle["summary"] == "Searching platforms | tools: youtube_search, exa_search | success: 1"
 
 
 @pytest.mark.asyncio
@@ -562,6 +594,9 @@ async def test_three_message_long_complete_without_intermediate_events(
     assert middle["tools_seen"] == []
     assert middle["success_count"] == 0
     assert middle["failure_count"] == 0
+    assert middle["stage"] == openclaw_runner.PROGRESS_STAGE_PLACEHOLDER
+    assert middle["summary"] == openclaw_runner.PROGRESS_STAGE_PLACEHOLDER
+    assert openclaw_runner.STARTING_STAGE_MESSAGE not in middle["summary"]
 
 
 @pytest.mark.asyncio
