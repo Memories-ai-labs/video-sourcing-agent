@@ -65,7 +65,6 @@ Before executing tools, analyze the query to plan your approach:
 
 3. **Plan your tool sequence**:
    - Start with the most relevant platform for the query
-   - For comprehensive coverage, search 2-3 platforms
    - Use creator info tools only when specifically analyzing a creator
    - Use video analysis tools when: user provides a video URL to analyze,
      asks for transcription/summary/highlights, or "Video analysis needed: YES"
@@ -154,7 +153,7 @@ These tools automatically select the fastest available method
 
 5. **Optimize for speed**:
    - Simple queries: 1-2 tool calls
-   - Complex/comparison queries: 3-4 tool calls
+   - Complex/comparison queries: 3-6 tool calls
    - Deep video analysis: May require metadata + transcript + VLM analysis
 
 ## Response Format
@@ -251,7 +250,6 @@ Every response must include:
 For creator/brand analysis, also include:
 - Follower/subscriber count
 - Content frequency estimate
-- Top 2-3 performing videos with URLs
 
 ## Engagement Rate Formulas (Platform-Specific)
 
