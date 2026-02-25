@@ -1,5 +1,6 @@
 """Core video sourcing agent implementation."""
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -27,12 +28,6 @@ from video_sourcing_agent.models.query import (
 from video_sourcing_agent.models.result import AgentResponse, VideoReference
 from video_sourcing_agent.router.query_parser import QueryParser
 from video_sourcing_agent.tools.base import BaseTool, ToolResult
-from video_sourcing_agent.tools.memories_v2 import (
-    SocialMediaMAITranscriptTool,
-    SocialMediaMetadataTool,
-    SocialMediaTranscriptTool,
-    VLMVideoAnalysisTool,
-)
 from video_sourcing_agent.tools.exa import (
     ExaContentTool,
     ExaResearchTool,
@@ -42,6 +37,12 @@ from video_sourcing_agent.tools.exa import (
 from video_sourcing_agent.tools.instagram_apify import (
     InstagramApifyCreatorTool,
     InstagramApifySearchTool,
+)
+from video_sourcing_agent.tools.memories_v2 import (
+    SocialMediaMAITranscriptTool,
+    SocialMediaMetadataTool,
+    SocialMediaTranscriptTool,
+    VLMVideoAnalysisTool,
 )
 from video_sourcing_agent.tools.registry import ToolRegistry
 from video_sourcing_agent.tools.retry import RetryExecutor, get_fallback_tools
@@ -95,6 +96,11 @@ class VideoSourcingAgent:
         self.max_steps = max_steps or settings.max_agent_steps
         self.enable_clarification = enable_clarification
         self.enable_retry = enable_retry
+        configured_concurrency = getattr(settings, "tool_execution_concurrency", 4)
+        try:
+            self.tool_execution_concurrency = max(1, int(configured_concurrency))
+        except (TypeError, ValueError):
+            self.tool_execution_concurrency = 4
 
         # Initialize Gemini client
         self.gemini = GeminiClient(api_key=google_api_key)
@@ -158,10 +164,17 @@ class VideoSourcingAgent:
         Returns:
             AgentResponse with answer and video references.
         """
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         # Parse query to extract slots (LLM-first approach per PRD)
+        parse_started_at = time.perf_counter()
         parsed_query = await self.query_parser.parse(user_query)
+        parse_duration_ms = int((time.perf_counter() - parse_started_at) * 1000)
+        logger.info(
+            "agent_parse_complete duration_ms=%d query_length=%d",
+            parse_duration_ms,
+            len(user_query),
+        )
 
         # Check if clarification is needed
         if (
@@ -179,7 +192,7 @@ class VideoSourcingAgent:
                 needs_clarification=True,
                 clarification_question=clarification_response["question"],
                 parsed_query=parsed_query,
-                execution_time_seconds=round(time.time() - start_time, 2),
+                execution_time_seconds=round(time.perf_counter() - start_time, 2),
             )
 
         # Create session with parsed query
@@ -214,10 +227,17 @@ class VideoSourcingAgent:
         # Agentic loop
         while session.current_step < session.max_steps:
             # Call Gemini
-            response = self.gemini.create_message(
+            gemini_started_at = time.perf_counter()
+            response = await self.gemini.create_message_async(
                 messages=messages,
                 system=build_system_prompt(),
                 tools=gemini_tools,
+            )
+            gemini_duration_ms = int((time.perf_counter() - gemini_started_at) * 1000)
+            logger.info(
+                "agent_gemini_call_complete step=%d duration_ms=%d",
+                session.current_step + 1,
+                gemini_duration_ms,
             )
 
             # Track token usage
@@ -243,94 +263,71 @@ class VideoSourcingAgent:
 
             # Execute tools and collect results as function response parts
             function_response_parts: list[types.Part] = []
-            for tool_call in tool_calls:
-                tool_name = tool_call["name"]
-                tool_input = tool_call["input"]
+            indexed_tool_calls = [
+                (index, call["name"], call["input"])
+                for index, call in enumerate(tool_calls)
+            ]
+            for _, tool_name, _ in indexed_tool_calls:
                 tools_used.add(tool_name)
                 tool_invocations[tool_name] = tool_invocations.get(tool_name, 0) + 1
 
-                # Execute tool with retry if enabled
-                if self.enable_retry:
-                    tool = self.tools.get(tool_name)
-                    if tool:
-                        # Get fallback tools if available
-                        fallback_names = get_fallback_tools(tool_name)
-                        fallback_tools: list[BaseTool] = [
-                            t for t in (
-                                self.tools.get(name)
-                                for name in fallback_names
-                                if self.tools.has(name)
+            if indexed_tool_calls:
+                tool_results = await self._execute_tool_calls_in_order(indexed_tool_calls)
+                for _, tool_name, tool_input, result in tool_results:
+                    # CRITICAL: Filter tool results by time frame BEFORE Gemini sees them
+                    # This ensures Gemini's answer only references videos within the time window
+                    if (
+                        parsed_query
+                        and parsed_query.time_frame
+                        and parsed_query.time_frame != TimeFrame.ALL_TIME
+                    ):
+                        result = self._filter_tool_result_by_time(result, parsed_query.time_frame)
+
+                    # Store result in session (now filtered)
+                    session.search_results.append({
+                        "tool": tool_name,
+                        "input": tool_input,
+                        "result": result.data if result.success else result.error,
+                        "success": result.success,
+                    })
+
+                    # Track VLM token usage if applicable
+                    if tool_name == "vlm_video_analysis" and result.success and result.data:
+                        usage = result.data.get("usage")
+                        if usage:
+                            input_raw = usage.get("prompt_tokens")
+                            if input_raw is None:
+                                input_raw = usage.get("input_tokens")
+
+                            output_raw = usage.get("completion_tokens")
+                            if output_raw is None:
+                                output_raw = usage.get("output_tokens")
+
+                            input_tokens = _coerce_token_count(input_raw)
+                            output_tokens = _coerce_token_count(output_raw)
+
+                            total_raw = usage.get("total_tokens")
+                            total_tokens = _coerce_token_count(
+                                total_raw,
+                                input_tokens + output_tokens,
                             )
-                            if t is not None
-                        ]
+                            vlm_token_usage = vlm_token_usage.add(TokenUsage(
+                                input_tokens=input_tokens,
+                                output_tokens=output_tokens,
+                                total_tokens=total_tokens,
+                            ))
 
-                        if fallback_tools:
-                            result = await self.retry_executor.execute_with_fallback(
-                                tool, fallback_tools, **tool_input
-                            )
-                        else:
-                            result = await self.retry_executor.execute_with_retry(
-                                tool, **tool_input
-                            )
-                    else:
-                        result = await self.tools.execute(tool_name, **tool_input)
-                else:
-                    result = await self.tools.execute(tool_name, **tool_input)
+                    # Format result for Gemini
+                    result_str = result.to_string()
+                    if not result.success:
+                        result_str = f"Error: {result_str}"
 
-                # CRITICAL: Filter tool results by time frame BEFORE Gemini sees them
-                # This ensures Gemini's answer only references videos within the time window
-                if (
-                    parsed_query
-                    and parsed_query.time_frame
-                    and parsed_query.time_frame != TimeFrame.ALL_TIME
-                ):
-                    result = self._filter_tool_result_by_time(result, parsed_query.time_frame)
-
-                # Store result in session (now filtered)
-                session.search_results.append({
-                    "tool": tool_name,
-                    "input": tool_input,
-                    "result": result.data if result.success else result.error,
-                    "success": result.success,
-                })
-
-                # Track VLM token usage if applicable
-                if tool_name == "vlm_video_analysis" and result.success and result.data:
-                    usage = result.data.get("usage")
-                    if usage:
-                        input_raw = usage.get("prompt_tokens")
-                        if input_raw is None:
-                            input_raw = usage.get("input_tokens")
-
-                        output_raw = usage.get("completion_tokens")
-                        if output_raw is None:
-                            output_raw = usage.get("output_tokens")
-
-                        input_tokens = _coerce_token_count(input_raw)
-                        output_tokens = _coerce_token_count(output_raw)
-
-                        total_raw = usage.get("total_tokens")
-                        total_tokens = _coerce_token_count(
-                            total_raw,
-                            input_tokens + output_tokens,
+                    function_response_parts.append(
+                        types.Part.from_function_response(
+                            name=tool_name,
+                            response={"result": result_str},
                         )
-                        vlm_token_usage = vlm_token_usage.add(TokenUsage(
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                            total_tokens=total_tokens,
-                        ))
-
-                # Format result for Gemini
-                result_str = result.to_string()
-                if not result.success:
-                    result_str = f"Error: {result_str}"
-
-                function_response_parts.append(
-                    types.Part.from_function_response(
-                        name=tool_name,
-                        response={"result": result_str},
                     )
-                )
 
             # Add tool results to messages as user turn
             if function_response_parts:
@@ -343,7 +340,14 @@ class VideoSourcingAgent:
                 break
 
         # Build response
-        execution_time = time.time() - start_time
+        execution_time = time.perf_counter() - start_time
+        logger.info(
+            "agent_query_complete duration_ms=%d steps=%d gemini_calls=%d tool_calls=%d",
+            int(execution_time * 1000),
+            session.current_step,
+            gemini_calls,
+            sum(tool_invocations.values()),
+        )
 
         # Calculate usage metrics
         usage_metrics = self._calculate_usage_metrics(
@@ -379,6 +383,84 @@ class VideoSourcingAgent:
             usage_metrics=usage_metrics,
             parsed_query=parsed_query,
         )
+
+    async def _execute_tool(self, tool_name: str, tool_input: dict[str, Any]) -> ToolResult:
+        """Execute a tool with retry/fallback if enabled."""
+        if self.enable_retry:
+            tool = self.tools.get(tool_name)
+            if tool:
+                fallback_names = get_fallback_tools(tool_name)
+                fallback_tools: list[BaseTool] = [
+                    t
+                    for t in (
+                        self.tools.get(name)
+                        for name in fallback_names
+                        if self.tools.has(name)
+                    )
+                    if t is not None
+                ]
+
+                if fallback_tools:
+                    return await self.retry_executor.execute_with_fallback(
+                        tool, fallback_tools, **tool_input
+                    )
+                return await self.retry_executor.execute_with_retry(tool, **tool_input)
+
+            return await self.tools.execute(tool_name, **tool_input)
+
+        return await self.tools.execute(tool_name, **tool_input)
+
+    async def _execute_tool_call(
+        self,
+        index: int,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> tuple[int, str, dict[str, Any], ToolResult]:
+        """Execute a single tool call and return result with original index."""
+        tool_started_at = time.perf_counter()
+        result = await self._execute_tool(tool_name, tool_input)
+        tool_duration_ms = int((time.perf_counter() - tool_started_at) * 1000)
+        logger.info(
+            "agent_tool_execution_complete tool=%s duration_ms=%d success=%s",
+            tool_name,
+            tool_duration_ms,
+            result.success,
+        )
+        return index, tool_name, tool_input, result
+
+    async def _execute_tool_calls_in_order(
+        self,
+        indexed_tool_calls: list[tuple[int, str, dict[str, Any]]],
+    ) -> list[tuple[int, str, dict[str, Any], ToolResult]]:
+        """Run tool calls concurrently (bounded) and return in call index order."""
+        if not indexed_tool_calls:
+            return []
+        if len(indexed_tool_calls) == 1:
+            return [await self._execute_tool_call(*indexed_tool_calls[0])]
+
+        semaphore = asyncio.Semaphore(self.tool_execution_concurrency)
+
+        async def _execute_bounded(
+            tool_call: tuple[int, str, dict[str, Any]]
+        ) -> tuple[int, str, dict[str, Any], ToolResult]:
+            async with semaphore:
+                return await self._execute_tool_call(*tool_call)
+
+        tasks = [
+            asyncio.create_task(_execute_bounded(tool_call))
+            for tool_call in indexed_tool_calls
+        ]
+        ordered_results: list[tuple[int, str, dict[str, Any], ToolResult]] = []
+        try:
+            for task in tasks:
+                ordered_results.append(await task)
+            return ordered_results
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     def _build_enhanced_query(self, user_query: str, parsed_query: ParsedQuery) -> str:
         """Build enhanced query string with extracted slots for Gemini.

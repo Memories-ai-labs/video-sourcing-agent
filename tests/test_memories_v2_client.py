@@ -1,5 +1,6 @@
 """Tests for Memories.ai v2 API client."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -209,6 +210,48 @@ class TestMemoriesV2ClientYouTube:
 
         assert "text" in result
         assert len(result["segments"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_reuses_httpx_client_for_same_timeout(self, client):
+        """Two metadata calls should reuse the same underlying AsyncClient."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"title": "Reuse test"}
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+
+            await client.get_youtube_metadata("https://youtube.com/watch?v=one")
+            await client.get_youtube_metadata("https://youtube.com/watch?v=two")
+
+        assert mock_client.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_reuses_single_client_during_concurrent_first_use(self, client):
+        """Concurrent first-use should still initialize only one AsyncClient."""
+        active_client = MagicMock()
+        active_client.post = AsyncMock(return_value=MagicMock())
+
+        async def delayed_enter():
+            await asyncio.sleep(0.01)
+            return active_client
+
+        def build_raw_client(*args, **kwargs):
+            del args, kwargs
+            raw_client = MagicMock()
+            raw_client.__aenter__.side_effect = delayed_enter
+            raw_client.aclose = AsyncMock()
+            return raw_client
+
+        with patch("httpx.AsyncClient", side_effect=build_raw_client) as mock_client:
+            await asyncio.gather(*[
+                client._get_client(30.0)
+                for _ in range(10)
+            ])
+
+        assert mock_client.call_count == 1
 
 
 class TestMemoriesV2ClientVLM:

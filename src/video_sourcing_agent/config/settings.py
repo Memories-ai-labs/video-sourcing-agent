@@ -84,6 +84,13 @@ class Settings(BaseSettings):
         description="Maximum videos to return per search",
         validation_alias="MAX_VIDEOS_PER_SEARCH",
     )
+    tool_execution_concurrency: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        description="Maximum concurrent tool calls within one agent step",
+        validation_alias="TOOL_EXECUTION_CONCURRENCY",
+    )
 
     # Timeouts
     api_timeout_seconds: int = Field(
@@ -145,6 +152,15 @@ class Settings(BaseSettings):
         default=15,
         description="Keep-alive ping interval in seconds",
         validation_alias="SSE_PING_INTERVAL",
+    )
+
+    # OpenClaw UX tuning
+    openclaw_progress_gate_seconds: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        description="Seconds before first throttled OpenClaw progress update",
+        validation_alias="OPENCLAW_PROGRESS_GATE_SECONDS",
     )
 
     @model_validator(mode="after")

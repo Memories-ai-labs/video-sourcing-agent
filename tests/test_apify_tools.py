@@ -1,6 +1,7 @@
 """Tests for Apify-based platform tools (TikTok, Instagram, Twitter)."""
 
-from unittest.mock import AsyncMock, MagicMock
+import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,6 +52,52 @@ class TestApifyClient:
         client = ApifyClient(api_token="test")
         with pytest.raises(ValueError, match="Must provide"):
             await client.scrape_twitter()
+
+    @pytest.mark.asyncio
+    async def test_run_actor_reuses_client_for_same_timeout(self):
+        """Repeated actor runs with same timeout should reuse one AsyncClient."""
+        client = ApifyClient(api_token="test")
+
+        mock_response = MagicMock()
+        mock_response.is_success = True
+        mock_response.json.return_value = [{"id": "1"}]
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+            await client.run_actor("clockworks/tiktok-scraper", {"q": "a"}, timeout_secs=120)
+            await client.run_actor("clockworks/tiktok-scraper", {"q": "b"}, timeout_secs=120)
+
+        assert mock_client.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_get_client_concurrent_first_use_reuses_single_instance(self):
+        """Concurrent first-use should initialize one AsyncClient per timeout bucket."""
+        client = ApifyClient(api_token="test")
+
+        active_client = MagicMock()
+        active_client.post = AsyncMock()
+
+        async def delayed_enter():
+            await asyncio.sleep(0.01)
+            return active_client
+
+        def build_raw_client(*args, **kwargs):
+            del args, kwargs
+            raw_client = MagicMock()
+            raw_client.__aenter__.side_effect = delayed_enter
+            raw_client.aclose = AsyncMock()
+            return raw_client
+
+        with patch("httpx.AsyncClient", side_effect=build_raw_client) as mock_client:
+            await asyncio.gather(*[
+                client._get_client(30.0)
+                for _ in range(10)
+            ])
+
+        assert mock_client.call_count == 1
 
 
 class TestTikTokApifySearchTool:

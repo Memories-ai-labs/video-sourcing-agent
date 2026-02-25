@@ -1,5 +1,6 @@
 """Google Gemini API client with tool use support."""
 
+import asyncio
 from typing import Any
 
 from google import genai
@@ -34,6 +35,25 @@ class GeminiClient:
             self._client = genai.Client(api_key=self.api_key)
         return self._client
 
+    def _build_config(
+        self,
+        system: str | None = None,
+        tools: list[types.Tool] | None = None,
+        max_tokens: int = 4096,
+    ) -> types.GenerateContentConfig:
+        """Build Gemini request config."""
+        config = types.GenerateContentConfig(
+            max_output_tokens=max_tokens,
+            system_instruction=system,
+        )
+        if tools:
+            config.tools = tools  # type: ignore[assignment]
+            # Disable automatic function calling - we want to handle it manually
+            config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
+                disable=True
+            )
+        return config
+
     def create_message(
         self,
         messages: list[types.Content],
@@ -52,18 +72,25 @@ class GeminiClient:
         Returns:
             Gemini's response.
         """
-        config = types.GenerateContentConfig(
-            max_output_tokens=max_tokens,
-            system_instruction=system,
-        )
-        if tools:
-            config.tools = tools  # type: ignore[assignment]
-            # Disable automatic function calling - we want to handle it manually
-            config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
-                disable=True
-            )
+        config = self._build_config(system=system, tools=tools, max_tokens=max_tokens)
 
         return self.client.models.generate_content(
+            model=self.model,
+            contents=messages,  # type: ignore[arg-type]
+            config=config,
+        )
+
+    async def create_message_async(
+        self,
+        messages: list[types.Content],
+        system: str | None = None,
+        tools: list[types.Tool] | None = None,
+        max_tokens: int = 4096,
+    ) -> types.GenerateContentResponse:
+        """Create a Gemini message without blocking the event loop."""
+        config = self._build_config(system=system, tools=tools, max_tokens=max_tokens)
+        return await asyncio.to_thread(
+            self.client.models.generate_content,
             model=self.model,
             contents=messages,  # type: ignore[arg-type]
             config=config,

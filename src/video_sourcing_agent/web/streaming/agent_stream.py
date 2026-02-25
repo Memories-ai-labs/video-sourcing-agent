@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from collections.abc import AsyncGenerator
@@ -79,6 +80,11 @@ class StreamingAgentWrapper:
         self.enable_clarification = enable_clarification
         self.enable_retry = enable_retry
         self.ping_interval = settings.sse_ping_interval
+        configured_concurrency = getattr(settings, "tool_execution_concurrency", 4)
+        try:
+            self.tool_execution_concurrency = max(1, int(configured_concurrency))
+        except (TypeError, ValueError):
+            self.tool_execution_concurrency = 4
 
         # Initialize Gemini client
         self.gemini = GeminiClient(api_key=google_api_key)
@@ -98,12 +104,6 @@ class StreamingAgentWrapper:
 
     def _register_tools(self, youtube_api_key: str | None = None) -> None:
         """Register all available tools."""
-        from video_sourcing_agent.tools.memories_v2 import (
-            SocialMediaMAITranscriptTool,
-            SocialMediaMetadataTool,
-            SocialMediaTranscriptTool,
-            VLMVideoAnalysisTool,
-        )
         from video_sourcing_agent.tools.exa import (
             ExaContentTool,
             ExaResearchTool,
@@ -113,6 +113,12 @@ class StreamingAgentWrapper:
         from video_sourcing_agent.tools.instagram_apify import (
             InstagramApifyCreatorTool,
             InstagramApifySearchTool,
+        )
+        from video_sourcing_agent.tools.memories_v2 import (
+            SocialMediaMAITranscriptTool,
+            SocialMediaMetadataTool,
+            SocialMediaTranscriptTool,
+            VLMVideoAnalysisTool,
         )
         from video_sourcing_agent.tools.tiktok_apify import (
             TikTokApifyCreatorTool,
@@ -165,7 +171,7 @@ class StreamingAgentWrapper:
             SSE events representing progress, tool calls, and results.
         """
         session_id = str(uuid4())
-        start_time = time.time()
+        start_time = time.perf_counter()
         max_steps = max_steps or self.max_steps
         do_clarification = (
             enable_clarification if enable_clarification is not None else self.enable_clarification
@@ -182,7 +188,14 @@ class StreamingAgentWrapper:
         try:
             # Parse query
             yield ProgressEvent.create(step=0, max_steps=max_steps, message="Parsing query...")
+            parse_started_at = time.perf_counter()
             parsed_query = await self.query_parser.parse(query)
+            parse_duration_ms = int((time.perf_counter() - parse_started_at) * 1000)
+            logger.info(
+                "stream_agent_parse_complete duration_ms=%d session_id=%s",
+                parse_duration_ms,
+                session_id,
+            )
 
             # Check if clarification is needed
             if do_clarification and self.clarification_manager.needs_clarification(parsed_query):
@@ -233,10 +246,18 @@ class StreamingAgentWrapper:
                 )
 
                 # Call Gemini
-                response = self.gemini.create_message(
+                gemini_started_at = time.perf_counter()
+                response = await self.gemini.create_message_async(
                     messages=messages,
                     system=build_system_prompt(),
                     tools=gemini_tools,
+                )
+                gemini_duration_ms = int((time.perf_counter() - gemini_started_at) * 1000)
+                logger.info(
+                    "stream_agent_gemini_call_complete session_id=%s step=%d duration_ms=%d",
+                    session_id,
+                    session.current_step + 1,
+                    gemini_duration_ms,
                 )
 
                 # Track token usage
@@ -261,84 +282,87 @@ class StreamingAgentWrapper:
 
                 # Execute tools
                 function_response_parts: list[types.Part] = []
-                for tool_call in tool_calls:
-                    tool_name = tool_call["name"]
-                    tool_input = tool_call["input"]
+                indexed_tool_calls = [
+                    (index, call["name"], call["input"])
+                    for index, call in enumerate(tool_calls)
+                ]
+                for _, tool_name, tool_input in indexed_tool_calls:
                     tools_used.add(tool_name)
                     tool_invocations[tool_name] = tool_invocations.get(tool_name, 0) + 1
-
-                    # Emit tool call event
                     yield ToolCallEvent.create(tool=tool_name, input_data=tool_input)
 
-                    # Execute tool with retry if enabled
-                    result = await self._execute_tool(tool_name, tool_input)
-
-                    # Filter by time frame
-                    if (
-                        parsed_query
-                        and parsed_query.time_frame
-                        and parsed_query.time_frame != TimeFrame.ALL_TIME
-                    ):
-                        result = self._filter_tool_result_by_time(result, parsed_query.time_frame)
-
-                    # Count videos found
-                    videos_found = 0
-                    if result.success and isinstance(result.data, dict):
-                        videos_found = len(result.data.get("videos", []))
-
-                    # Emit tool result event
-                    yield ToolResultEvent.create(
-                        tool=tool_name,
-                        success=result.success,
-                        videos_found=videos_found if result.success else None,
-                        error=result.error if not result.success else None,
-                    )
-
-                    # Store result in session
-                    session.search_results.append({
-                        "tool": tool_name,
-                        "input": tool_input,
-                        "result": result.data if result.success else result.error,
-                        "success": result.success,
-                    })
-
-                    # Track VLM token usage
-                    if tool_name == "vlm_video_analysis" and result.success and result.data:
-                        usage_data = result.data.get("usage")
-                        if usage_data:
-                            input_raw = usage_data.get("prompt_tokens")
-                            if input_raw is None:
-                                input_raw = usage_data.get("input_tokens")
-
-                            output_raw = usage_data.get("completion_tokens")
-                            if output_raw is None:
-                                output_raw = usage_data.get("output_tokens")
-
-                            input_tokens = _coerce_token_count(input_raw)
-                            output_tokens = _coerce_token_count(output_raw)
-
-                            total_raw = usage_data.get("total_tokens")
-                            total_tokens = _coerce_token_count(
-                                total_raw,
-                                input_tokens + output_tokens,
+                if indexed_tool_calls:
+                    result_iter = self._iter_tool_call_results_in_order(indexed_tool_calls)
+                    async for _, tool_name, tool_input, result in result_iter:
+                        # Filter by time frame
+                        if (
+                            parsed_query
+                            and parsed_query.time_frame
+                            and parsed_query.time_frame != TimeFrame.ALL_TIME
+                        ):
+                            result = self._filter_tool_result_by_time(
+                                result,
+                                parsed_query.time_frame,
                             )
-                            vlm_token_usage = vlm_token_usage.add(TokenUsage(
-                                input_tokens=input_tokens,
-                                output_tokens=output_tokens,
-                                total_tokens=total_tokens,
-                            ))
 
-                    # Format result for Gemini
-                    result_str = result.to_string()
-                    if not result.success:
-                        result_str = f"Error: {result_str}"
+                        # Count videos found
+                        videos_found = 0
+                        if result.success and isinstance(result.data, dict):
+                            videos_found = len(result.data.get("videos", []))
 
-                    function_response_parts.append(
-                        types.Part.from_function_response(
-                            name=tool_name,
-                            response={"result": result_str},
+                        # Emit tool result event
+                        yield ToolResultEvent.create(
+                            tool=tool_name,
+                            success=result.success,
+                            videos_found=videos_found if result.success else None,
+                            error=result.error if not result.success else None,
                         )
-                    )
+
+                        # Store result in session
+                        session.search_results.append({
+                            "tool": tool_name,
+                            "input": tool_input,
+                            "result": result.data if result.success else result.error,
+                            "success": result.success,
+                        })
+
+                        # Track VLM token usage
+                        if tool_name == "vlm_video_analysis" and result.success and result.data:
+                            usage_data = result.data.get("usage")
+                            if usage_data:
+                                input_raw = usage_data.get("prompt_tokens")
+                                if input_raw is None:
+                                    input_raw = usage_data.get("input_tokens")
+
+                                output_raw = usage_data.get("completion_tokens")
+                                if output_raw is None:
+                                    output_raw = usage_data.get("output_tokens")
+
+                                input_tokens = _coerce_token_count(input_raw)
+                                output_tokens = _coerce_token_count(output_raw)
+
+                                total_raw = usage_data.get("total_tokens")
+                                total_tokens = _coerce_token_count(
+                                    total_raw,
+                                    input_tokens + output_tokens,
+                                )
+                                vlm_token_usage = vlm_token_usage.add(TokenUsage(
+                                    input_tokens=input_tokens,
+                                    output_tokens=output_tokens,
+                                    total_tokens=total_tokens,
+                                ))
+
+                        # Format result for Gemini
+                        result_str = result.to_string()
+                        if not result.success:
+                            result_str = f"Error: {result_str}"
+
+                        function_response_parts.append(
+                            types.Part.from_function_response(
+                                name=tool_name,
+                                response={"result": result_str},
+                            )
+                        )
 
                 # Add tool results to messages
                 if function_response_parts:
@@ -350,7 +374,16 @@ class StreamingAgentWrapper:
                     break
 
             # Build response
-            execution_time = time.time() - start_time
+            execution_time = time.perf_counter() - start_time
+            logger.info(
+                "stream_agent_query_complete session_id=%s duration_ms=%d steps=%d gemini_calls=%d "
+                "tool_calls=%d",
+                session_id,
+                int(execution_time * 1000),
+                session.current_step,
+                gemini_calls,
+                sum(tool_invocations.values()),
+            )
 
             usage_metrics = self._calculate_usage_metrics(
                 total_input_tokens=total_input_tokens,
@@ -397,6 +430,57 @@ class StreamingAgentWrapper:
                 code="agent_error",
                 message=str(e),
             )
+
+    async def _execute_tool_call(
+        self,
+        index: int,
+        tool_name: str,
+        tool_input: dict[str, Any],
+    ) -> tuple[int, str, dict[str, Any], ToolResult]:
+        """Execute one tool call and return it with its original index."""
+        tool_started_at = time.perf_counter()
+        result = await self._execute_tool(tool_name, tool_input)
+        tool_duration_ms = int((time.perf_counter() - tool_started_at) * 1000)
+        logger.info(
+            "stream_agent_tool_execution_complete tool=%s duration_ms=%d success=%s",
+            tool_name,
+            tool_duration_ms,
+            result.success,
+        )
+        return index, tool_name, tool_input, result
+
+    async def _iter_tool_call_results_in_order(
+        self,
+        indexed_tool_calls: list[tuple[int, str, dict[str, Any]]],
+    ) -> AsyncGenerator[tuple[int, str, dict[str, Any], ToolResult], None]:
+        """Yield tool call results in original order while running work concurrently."""
+        if not indexed_tool_calls:
+            return
+        if len(indexed_tool_calls) == 1:
+            yield await self._execute_tool_call(*indexed_tool_calls[0])
+            return
+
+        semaphore = asyncio.Semaphore(self.tool_execution_concurrency)
+
+        async def _execute_bounded(
+            tool_call: tuple[int, str, dict[str, Any]]
+        ) -> tuple[int, str, dict[str, Any], ToolResult]:
+            async with semaphore:
+                return await self._execute_tool_call(*tool_call)
+
+        tasks = [
+            asyncio.create_task(_execute_bounded(tool_call))
+            for tool_call in indexed_tool_calls
+        ]
+        try:
+            for task in tasks:
+                yield await task
+        except BaseException:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            raise
 
     async def _execute_tool(self, tool_name: str, tool_input: dict[str, Any]) -> ToolResult:
         """Execute a tool with retry/fallback if enabled."""

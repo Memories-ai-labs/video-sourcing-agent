@@ -138,7 +138,7 @@ class ToolResult(BaseModel):
                 parts.append(self.data)
             elif isinstance(self.data, dict | list):
                 import json
-                parts.append(json.dumps(self.data, indent=2, default=str))
+                parts.append(json.dumps(self.data, separators=(",", ":"), default=str))
             else:
                 parts.append(str(self.data))
 

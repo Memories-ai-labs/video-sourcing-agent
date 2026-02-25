@@ -83,7 +83,12 @@ class RetryExecutor:
 
             # Don't delay after last attempt
             if attempt < self.max_retries:
-                logger.info(f"Retrying {tool.name} in {delay:.1f}s...")
+                logger.info(
+                    "retry_sleep tool=%s attempt=%d delay_seconds=%.1f",
+                    tool.name,
+                    attempt + 1,
+                    delay,
+                )
                 await asyncio.sleep(delay)
                 delay = min(delay * self.backoff_factor, self.max_delay)
 

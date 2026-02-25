@@ -2,6 +2,7 @@
 
 from datetime import datetime
 
+from video_sourcing_agent.tools.base import ToolResult
 from video_sourcing_agent.utils import (
     get_current_date_iso,
     get_current_year,
@@ -94,3 +95,15 @@ class TestDateUtils:
         """Test published after date for empty string."""
         result = get_published_after_date("")
         assert result is None
+
+
+class TestToolResultFormatting:
+    """Tests for ToolResult string formatting."""
+
+    def test_to_string_uses_compact_json(self):
+        """ToolResult JSON payload should be compact for token efficiency."""
+        result = ToolResult.ok({"videos": [{"id": "1", "title": "A"}], "total_results": 1})
+        output = result.to_string()
+
+        assert "\n" not in output
+        assert '"videos":[{"id":"1","title":"A"}]' in output

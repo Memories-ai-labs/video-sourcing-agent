@@ -25,9 +25,9 @@ Manual validation checklist for `video-sourcing` OpenClaw skill integration.
      - Managed bootstrap path is not required.
 
 3. Deterministic message count matrix
-   - Fast run (<10s):
+   - Fast run (<5s):
      - Exactly 2 user-visible messages.
-   - Slow run (>=10s):
+   - Slow run (>=5s):
      - 3+ user-visible messages with throttled middle progress.
 
 4. Missing prerequisites behavior

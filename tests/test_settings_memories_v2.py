@@ -62,6 +62,8 @@ def test_memories_defaults_used_when_optional_envs_missing() -> None:
     assert settings.memories_base_url == "https://mavi-backend.memories.ai/serve/api/v2"
     assert settings.memories_default_channel == "memories.ai"
     assert settings.memories_vlm_model == "gemini:gemini-3-flash-preview"
+    assert settings.tool_execution_concurrency == 4
+    assert settings.openclaw_progress_gate_seconds == 5
 
 
 def test_unknown_legacy_env_vars_are_ignored() -> None:

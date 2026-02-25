@@ -41,7 +41,7 @@ class QueryClassifier:
             messages = self.gemini.convert_messages_to_gemini(
                 [{"role": "user", "content": prompt}]
             )
-            response = self.gemini.create_message(
+            response = await self.gemini.create_message_async(
                 messages=messages,
                 max_tokens=1024,
             )

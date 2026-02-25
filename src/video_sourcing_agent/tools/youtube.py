@@ -1,5 +1,7 @@
 """YouTube Data API search tool."""
 
+import asyncio
+import threading
 from datetime import datetime
 from typing import Any
 
@@ -9,6 +11,20 @@ from googleapiclient.errors import HttpError  # type: ignore[import-untyped]
 from video_sourcing_agent.config.settings import get_settings
 from video_sourcing_agent.models.video import Creator, Platform, Video, VideoMetrics
 from video_sourcing_agent.tools.base import BaseTool, ToolResult
+
+
+def _execute_request_with_lock(
+    request: Any,
+    request_lock: threading.Lock,
+) -> dict[str, Any]:
+    """Execute a blocking request while guarding shared SDK client state."""
+    with request_lock:
+        return request.execute()
+
+
+async def _execute_request(request: Any, request_lock: threading.Lock) -> dict[str, Any]:
+    """Execute a blocking googleapiclient request without blocking event loop."""
+    return await asyncio.to_thread(_execute_request_with_lock, request, request_lock)
 
 
 class YouTubeSearchTool(BaseTool):
@@ -23,6 +39,7 @@ class YouTubeSearchTool(BaseTool):
         settings = get_settings()
         self.api_key = api_key or settings.youtube_api_key
         self._youtube: Any = None
+        self._request_lock = threading.Lock()
 
     @property
     def youtube(self) -> Any:
@@ -36,6 +53,10 @@ class YouTubeSearchTool(BaseTool):
         if not self.api_key:
             return False, "YOUTUBE_API_KEY is not configured"
         return True, None
+
+    async def _execute_request_locked(self, request: Any) -> dict[str, Any]:
+        """Execute one YouTube request with per-tool lock protection."""
+        return await _execute_request(request, self._request_lock)
 
     @property
     def name(self) -> str:
@@ -148,7 +169,9 @@ Returns structured video data including thumbnails, statistics, and channel info
                 search_params["videoDuration"] = video_duration
 
             # Execute search
-            search_response = self.youtube.search().list(**search_params).execute()
+            search_response = await self._execute_request_locked(
+                self.youtube.search().list(**search_params)
+            )
 
             items = search_response.get("items", [])
             if not items:
@@ -201,13 +224,11 @@ Returns structured video data including thumbnails, statistics, and channel info
         Returns:
             List of Video objects with full details.
         """
-        videos_response = (
-            self.youtube.videos()
-            .list(
+        videos_response = await self._execute_request_locked(
+            self.youtube.videos().list(
                 id=",".join(video_ids),
                 part="snippet,statistics,contentDetails",
             )
-            .execute()
         )
 
         videos: list[Video] = []
@@ -384,6 +405,7 @@ class YouTubeChannelTool(BaseTool):
         settings = get_settings()
         self.api_key = api_key or settings.youtube_api_key
         self._youtube: Any = None
+        self._request_lock = threading.Lock()
 
     @property
     def youtube(self) -> Any:
@@ -397,6 +419,10 @@ class YouTubeChannelTool(BaseTool):
         if not self.api_key:
             return False, "YOUTUBE_API_KEY is not configured"
         return True, None
+
+    async def _execute_request_locked(self, request: Any) -> dict[str, Any]:
+        """Execute one YouTube request with per-tool lock protection."""
+        return await _execute_request(request, self._request_lock)
 
     @property
     def name(self) -> str:
@@ -459,16 +485,18 @@ Returns: subscriber count, video count, view count, recent uploads, and channel 
         try:
             # Get channel info
             if channel_id:
-                channel_response = (
-                    self.youtube.channels()
-                    .list(id=channel_id, part="snippet,statistics,contentDetails")
-                    .execute()
+                channel_response = await self._execute_request_locked(
+                    self.youtube.channels().list(
+                        id=channel_id,
+                        part="snippet,statistics,contentDetails",
+                    )
                 )
             else:
-                channel_response = (
-                    self.youtube.channels()
-                    .list(forHandle=username, part="snippet,statistics,contentDetails")
-                    .execute()
+                channel_response = await self._execute_request_locked(
+                    self.youtube.channels().list(
+                        forHandle=username,
+                        part="snippet,statistics,contentDetails",
+                    )
                 )
 
             items = channel_response.get("items", [])
@@ -500,14 +528,12 @@ Returns: subscriber count, video count, view count, recent uploads, and channel 
                     .get("uploads")
                 )
                 if uploads_playlist_id:
-                    playlist_response = (
-                        self.youtube.playlistItems()
-                        .list(
+                    playlist_response = await self._execute_request_locked(
+                        self.youtube.playlistItems().list(
                             playlistId=uploads_playlist_id,
                             part="snippet",
                             maxResults=recent_videos_count,
                         )
-                        .execute()
                     )
                     result["recent_videos"] = [
                         {

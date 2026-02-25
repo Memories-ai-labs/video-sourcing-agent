@@ -7,6 +7,7 @@ This client provides access to the new Memories.ai v2 API which offers:
 - MAI transcript (AI-powered dual-layer visual + audio transcription)
 """
 
+import asyncio
 import re
 from typing import Any, BinaryIO, cast
 
@@ -41,6 +42,8 @@ class MemoriesV2Client:
         self.base_url = (normalized_base_url or settings_base_url or self.BASE_URL).rstrip("/")
         self.timeout = settings.api_timeout_seconds
         self.default_channel = settings.memories_default_channel.strip() or "memories.ai"
+        self._clients: dict[float, tuple[httpx.AsyncClient, Any]] = {}
+        self._client_lock = asyncio.Lock()
 
     def _headers(self) -> dict[str, str]:
         """Get request headers.
@@ -51,6 +54,38 @@ class MemoriesV2Client:
             "Authorization": self.api_key,
             "Content-Type": "application/json",
         }
+
+    async def _get_client(self, timeout: float) -> Any:
+        """Get or create a shared AsyncClient for the given timeout."""
+        key = float(timeout)
+        existing = self._clients.get(key)
+        if existing is not None:
+            return existing[1]
+
+        async with self._client_lock:
+            existing = self._clients.get(key)
+            if existing is not None:
+                return existing[1]
+
+            raw_client = httpx.AsyncClient(timeout=timeout)
+            enter = getattr(raw_client, "__aenter__", None)
+            if callable(enter):
+                entered = enter()
+                active_client = await entered if asyncio.iscoroutine(entered) else entered
+            else:
+                active_client = raw_client
+            self._clients[key] = (raw_client, active_client)
+            return active_client
+
+    async def aclose(self) -> None:
+        """Close all shared clients."""
+        async with self._client_lock:
+            clients = list(self._clients.values())
+            self._clients.clear()
+
+        for raw_client, _ in clients:
+            if hasattr(raw_client, "aclose"):
+                await raw_client.aclose()
 
     # -------------------------------------------------------------------------
     # YouTube endpoints
@@ -70,17 +105,17 @@ class MemoriesV2Client:
         Returns:
             Video metadata including title, description, views, etc.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/youtube/video/metadata",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.post(
+            f"{self.base_url}/youtube/video/metadata",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def get_youtube_transcript(
         self,
@@ -96,17 +131,17 @@ class MemoriesV2Client:
         Returns:
             Video transcript with timestamps.
         """
-        async with httpx.AsyncClient(timeout=60) as client:  # Longer timeout for transcripts
-            response = await client.post(
-                f"{self.base_url}/youtube/video/transcript",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(60.0)
+        response = await client.post(
+            f"{self.base_url}/youtube/video/transcript",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     # -------------------------------------------------------------------------
     # TikTok endpoints
@@ -126,17 +161,17 @@ class MemoriesV2Client:
         Returns:
             Video metadata including creator info, engagement, etc.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/tiktok/video/metadata",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.post(
+            f"{self.base_url}/tiktok/video/metadata",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def get_tiktok_transcript(
         self,
@@ -152,17 +187,17 @@ class MemoriesV2Client:
         Returns:
             Video transcript with timestamps.
         """
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.base_url}/tiktok/video/transcript",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(60.0)
+        response = await client.post(
+            f"{self.base_url}/tiktok/video/transcript",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     # -------------------------------------------------------------------------
     # Instagram endpoints
@@ -182,17 +217,17 @@ class MemoriesV2Client:
         Returns:
             Video metadata including creator info, engagement, etc.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/instagram/video/metadata",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.post(
+            f"{self.base_url}/instagram/video/metadata",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def get_instagram_transcript(
         self,
@@ -208,17 +243,17 @@ class MemoriesV2Client:
         Returns:
             Video transcript with timestamps.
         """
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.base_url}/instagram/video/transcript",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(60.0)
+        response = await client.post(
+            f"{self.base_url}/instagram/video/transcript",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     # -------------------------------------------------------------------------
     # Twitter endpoints
@@ -238,17 +273,17 @@ class MemoriesV2Client:
         Returns:
             Video metadata including creator info, engagement, etc.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                f"{self.base_url}/twitter/video/metadata",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.post(
+            f"{self.base_url}/twitter/video/metadata",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def get_twitter_transcript(
         self,
@@ -264,17 +299,17 @@ class MemoriesV2Client:
         Returns:
             Video transcript with timestamps.
         """
-        async with httpx.AsyncClient(timeout=60) as client:
-            response = await client.post(
-                f"{self.base_url}/twitter/video/transcript",
-                headers=self._headers(),
-                json={
-                    "video_url": video_url,
-                    "channel": channel or self.default_channel,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(60.0)
+        response = await client.post(
+            f"{self.base_url}/twitter/video/transcript",
+            headers=self._headers(),
+            json={
+                "video_url": video_url,
+                "channel": channel or self.default_channel,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     # -------------------------------------------------------------------------
     # VLM Chat endpoint
@@ -325,19 +360,19 @@ class MemoriesV2Client:
             Chat completion response.
         """
         settings = get_settings()
-        async with httpx.AsyncClient(timeout=120) as client:  # Long timeout for VLM
-            response = await client.post(
-                f"{self.base_url}/vu/chat/completions",
-                headers=self._headers(),
-                json={
-                    "model": model or settings.memories_vlm_model,
-                    "messages": messages,
-                    "max_tokens": max_tokens,
-                    "temperature": temperature,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(120.0)
+        response = await client.post(
+            f"{self.base_url}/vu/chat/completions",
+            headers=self._headers(),
+            json={
+                "model": model or settings.memories_vlm_model,
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def analyze_video_with_vlm(
         self,
@@ -488,17 +523,17 @@ class MemoriesV2Client:
         Returns:
             Upload response with asset_id.
         """
-        async with httpx.AsyncClient(timeout=120) as client:
-            # Use multipart form data for file upload
-            files = {"file": (filename, file)}
-            headers = {"Authorization": self.api_key}  # No Content-Type for multipart
-            response = await client.post(
-                f"{self.base_url}/upload",
-                headers=headers,
-                files=files,
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(120.0)
+        # Use multipart form data for file upload
+        files = {"file": (filename, file)}
+        headers = {"Authorization": self.api_key}  # No Content-Type for multipart
+        response = await client.post(
+            f"{self.base_url}/upload",
+            headers=headers,
+            files=files,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def get_asset_metadata(self, asset_id: str) -> dict[str, Any]:
         """Get metadata for an uploaded asset.
@@ -509,13 +544,13 @@ class MemoriesV2Client:
         Returns:
             Asset metadata.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                f"{self.base_url}/{asset_id}/metadata",
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.get(
+            f"{self.base_url}/{asset_id}/metadata",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def delete_asset(self, asset_id: str) -> bool:
         """Delete an uploaded asset.
@@ -526,13 +561,13 @@ class MemoriesV2Client:
         Returns:
             True if deleted successfully.
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.delete(
-                f"{self.base_url}/asset/{asset_id}",
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-            return True
+        client = await self._get_client(float(self.timeout))
+        response = await client.delete(
+            f"{self.base_url}/asset/{asset_id}",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return True
 
     # -------------------------------------------------------------------------
     # Transcription endpoint (for uploaded assets)
@@ -554,17 +589,17 @@ class MemoriesV2Client:
         Returns:
             Transcription response with text and timestamps.
         """
-        async with httpx.AsyncClient(timeout=120) as client:
-            response = await client.post(
-                f"{self.base_url}/asset/{asset_id}/transcription",
-                headers=self._headers(),
-                json={
-                    "model": model,
-                    "speaker_diarization": speaker_diarization,
-                },
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(120.0)
+        response = await client.post(
+            f"{self.base_url}/asset/{asset_id}/transcription",
+            headers=self._headers(),
+            json={
+                "model": model,
+                "speaker_diarization": speaker_diarization,
+            },
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     # -------------------------------------------------------------------------
     # Utility methods
@@ -883,14 +918,14 @@ class MemoriesV2Client:
         if webhook_url:
             payload["webhook_url"] = webhook_url
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                endpoint,
-                headers=self._headers(),
-                json=payload,
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.post(
+            endpoint,
+            headers=self._headers(),
+            json=payload,
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def get_mai_transcript_status(
         self,
@@ -910,13 +945,13 @@ class MemoriesV2Client:
                 "error": "..."  # Error message (if failed)
             }
         """
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                f"{self.base_url}/task/{task_id}",
-                headers=self._headers(),
-            )
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.get(
+            f"{self.base_url}/task/{task_id}",
+            headers=self._headers(),
+        )
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json())
 
     async def wait_for_mai_transcript(
         self,
@@ -938,8 +973,6 @@ class MemoriesV2Client:
             TimeoutError: If task doesn't complete within max_wait.
             RuntimeError: If task fails.
         """
-        import asyncio
-
         elapsed = 0.0
         while elapsed < max_wait:
             status = await self.get_mai_transcript_status(task_id)

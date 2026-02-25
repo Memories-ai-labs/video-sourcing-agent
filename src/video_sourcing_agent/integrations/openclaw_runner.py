@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, TextIO
 
+from video_sourcing_agent.config.settings import Settings, get_settings
 from video_sourcing_agent.web.streaming.agent_stream import StreamingAgentWrapper
 
 
@@ -36,6 +37,9 @@ class UxMode(StrEnum):
 IDLE_POLL_SECONDS = 1.0
 STARTING_STAGE_MESSAGE = "Starting video sourcing..."
 PROGRESS_STAGE_PLACEHOLDER = "In progress..."
+DEFAULT_PROGRESS_GATE_SECONDS = int(
+    Settings.model_fields["openclaw_progress_gate_seconds"].default or 5
+)
 
 
 def monotonic_now() -> float:
@@ -71,6 +75,18 @@ def _bounded_progress_gate(value: str) -> int:
     if parsed < 1 or parsed > 60:
         raise argparse.ArgumentTypeError("progress_gate_seconds must be in range [1, 60]")
     return parsed
+
+
+def _default_progress_gate_seconds() -> int:
+    """Resolve default progress gate from app settings with safe fallback."""
+    try:
+        clear_cache = getattr(get_settings, "cache_clear", None)
+        if callable(clear_cache):
+            clear_cache()
+        configured = get_settings().openclaw_progress_gate_seconds
+        return _bounded_progress_gate(str(configured))
+    except Exception:
+        return DEFAULT_PROGRESS_GATE_SECONDS
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -110,7 +126,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--progress-gate-seconds",
         type=_bounded_progress_gate,
-        default=10,
+        default=_default_progress_gate_seconds(),
         help=(
             "Emit throttled progress once elapsed time reaches this threshold, "
             "then at the same interval while running."
@@ -289,7 +305,7 @@ async def run_query_stream(
     max_steps: int | None,
     detail: EventDetail,
     ux_mode: UxMode = UxMode.RAW,
-    progress_gate_seconds: int = 10,
+    progress_gate_seconds: int = DEFAULT_PROGRESS_GATE_SECONDS,
     out: TextIO = sys.stdout,
     err: TextIO = sys.stderr,
 ) -> int:

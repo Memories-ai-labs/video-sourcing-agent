@@ -1,5 +1,6 @@
 """Apify API client for running actors and fetching results."""
 
+import asyncio
 import logging
 from typing import Any, cast
 
@@ -34,6 +35,8 @@ class ApifyClient:
         self.api_token = api_token or settings.apify_api_token
         self.base_url = "https://api.apify.com/v2"
         self.timeout = settings.api_timeout_seconds
+        self._clients: dict[float, tuple[httpx.AsyncClient, Any]] = {}
+        self._client_lock = asyncio.Lock()
 
     def _get_headers(self) -> dict[str, str]:
         """Get request headers with authentication."""
@@ -41,6 +44,38 @@ class ApifyClient:
             "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
         }
+
+    async def _get_client(self, timeout: float) -> Any:
+        """Get or create a shared AsyncClient for the given timeout."""
+        key = float(timeout)
+        existing = self._clients.get(key)
+        if existing is not None:
+            return existing[1]
+
+        async with self._client_lock:
+            existing = self._clients.get(key)
+            if existing is not None:
+                return existing[1]
+
+            raw_client = httpx.AsyncClient(timeout=timeout)
+            enter = getattr(raw_client, "__aenter__", None)
+            if callable(enter):
+                entered = enter()
+                active_client = await entered if asyncio.iscoroutine(entered) else entered
+            else:
+                active_client = raw_client
+            self._clients[key] = (raw_client, active_client)
+            return active_client
+
+    async def aclose(self) -> None:
+        """Close all shared clients."""
+        async with self._client_lock:
+            clients = list(self._clients.values())
+            self._clients.clear()
+
+        for raw_client, _ in clients:
+            if hasattr(raw_client, "aclose"):
+                await raw_client.aclose()
 
     async def run_actor(
         self,
@@ -75,19 +110,19 @@ class ApifyClient:
             "memory": memory_mbytes,
         }
 
-        async with httpx.AsyncClient(timeout=timeout_secs + 30) as client:
-            response = await client.post(
-                url,
-                headers=self._get_headers(),
-                params=params,
-                json=input_data,
-            )
-            if not response.is_success:
-                error_detail = response.text
-                logger.error(f"Apify API error {response.status_code}: {error_detail}")
-                logger.error(f"Request input_data: {input_data}")
-            response.raise_for_status()
-            return cast(list[dict[str, Any]], response.json())
+        client = await self._get_client(timeout_secs + 30)
+        response = await client.post(
+            url,
+            headers=self._get_headers(),
+            params=params,
+            json=input_data,
+        )
+        if not response.is_success:
+            error_detail = response.text
+            logger.error(f"Apify API error {response.status_code}: {error_detail}")
+            logger.error(f"Request input_data: {input_data}")
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json())
 
     async def run_actor_async(
         self,
@@ -117,15 +152,15 @@ class ApifyClient:
         url = f"{self.base_url}/acts/{api_actor_id}/runs"
         params = {"memory": memory_mbytes}
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.post(
-                url,
-                headers=self._get_headers(),
-                params=params,
-                json=input_data,
-            )
-            response.raise_for_status()
-            return cast(str, response.json()["data"]["id"])
+        client = await self._get_client(float(self.timeout))
+        response = await client.post(
+            url,
+            headers=self._get_headers(),
+            params=params,
+            json=input_data,
+        )
+        response.raise_for_status()
+        return cast(str, response.json()["data"]["id"])
 
     async def get_run_status(self, run_id: str) -> dict[str, Any]:
         """Get the status of an actor run.
@@ -138,10 +173,10 @@ class ApifyClient:
         """
         url = f"{self.base_url}/actor-runs/{run_id}"
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(url, headers=self._get_headers())
-            response.raise_for_status()
-            return cast(dict[str, Any], response.json()["data"])
+        client = await self._get_client(float(self.timeout))
+        response = await client.get(url, headers=self._get_headers())
+        response.raise_for_status()
+        return cast(dict[str, Any], response.json()["data"])
 
     async def get_dataset_items(
         self,
@@ -166,14 +201,14 @@ class ApifyClient:
             "format": "json",
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            response = await client.get(
-                url,
-                headers=self._get_headers(),
-                params=params,
-            )
-            response.raise_for_status()
-            return cast(list[dict[str, Any]], response.json())
+        client = await self._get_client(float(self.timeout))
+        response = await client.get(
+            url,
+            headers=self._get_headers(),
+            params=params,
+        )
+        response.raise_for_status()
+        return cast(list[dict[str, Any]], response.json())
 
     async def scrape_tiktok(
         self,

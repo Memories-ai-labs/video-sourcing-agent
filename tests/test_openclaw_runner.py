@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 from io import StringIO
 from types import SimpleNamespace
@@ -428,10 +429,37 @@ def test_progress_gate_validation_rejects_invalid_values(value: str):
         openclaw_runner.parse_args(["--query", "ok", "--progress-gate-seconds", value])
 
 
-def test_progress_gate_default_is_ten_seconds():
-    """CLI parser default aligns with deterministic 10-second heartbeat cadence."""
+def test_progress_gate_default_is_five_seconds():
+    """CLI parser default aligns with deterministic 5-second heartbeat cadence."""
     args = openclaw_runner.parse_args(["--query", "ok"])
-    assert args.progress_gate_seconds == 10
+    assert args.progress_gate_seconds == 5
+
+
+def test_run_query_stream_default_progress_gate_matches_setting_default():
+    """Programmatic runner default should match configured OpenClaw progress gate."""
+    signature = inspect.signature(openclaw_runner.run_query_stream)
+    default_value = signature.parameters["progress_gate_seconds"].default
+    assert default_value == openclaw_runner.DEFAULT_PROGRESS_GATE_SECONDS == 5
+
+
+def test_progress_gate_default_can_be_overridden_by_env(monkeypatch: pytest.MonkeyPatch):
+    """CLI parser should read OPENCLAW_PROGRESS_GATE_SECONDS when set."""
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("YOUTUBE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENCLAW_PROGRESS_GATE_SECONDS", "9")
+    args = openclaw_runner.parse_args(["--query", "ok"])
+    assert args.progress_gate_seconds == 9
+
+
+def test_progress_gate_default_reads_from_settings(monkeypatch: pytest.MonkeyPatch):
+    """CLI parser should use app settings source (including .env loading semantics)."""
+    monkeypatch.setattr(
+        openclaw_runner,
+        "get_settings",
+        lambda: SimpleNamespace(openclaw_progress_gate_seconds=11),
+    )
+    args = openclaw_runner.parse_args(["--query", "ok"])
+    assert args.progress_gate_seconds == 11
 
 
 @pytest.mark.asyncio
@@ -521,7 +549,9 @@ async def test_three_message_slow_run_emits_multiple_progress_updates(
     assert second_middle["tools_seen"] == ["youtube_search", "exa_search"]
     assert second_middle["success_count"] == 1
     assert second_middle["failure_count"] == 0
-    assert second_middle["summary"] == "Searching platforms | tools: youtube_search, exa_search | success: 1"
+    assert second_middle["summary"] == (
+        "Searching platforms | tools: youtube_search, exa_search | success: 1"
+    )
 
 
 @pytest.mark.asyncio

@@ -34,7 +34,7 @@ If `/video_sourcing` is used with no query body, ask for the missing query.
 ### `/video_sourcing` deterministic path
 
 1. Build command with required args:
-   - `<skill_dir>/scripts/run_video_query.sh --query "<query>" --event-detail <compact|verbose> --ux-mode three_message --progress-gate-seconds 10`
+   - `<skill_dir>/scripts/run_video_query.sh --query "<query>" --event-detail <compact|verbose> --ux-mode three_message --progress-gate-seconds 5`
 2. Start with `exec` using `background: true`.
 3. Poll with `process` using `action: "poll"` every 2-4 seconds until process exits.
 4. Parse NDJSON output and render only these events:
@@ -47,8 +47,8 @@ If `/video_sourcing` is used with no query body, ask for the missing query.
 
 Behavior target for `/video_sourcing`:
 
-1. Fast run (<10s): 2 messages (`started`, terminal).
-2. Longer run (>=10s): recurring throttled `ux_progress` updates, then terminal.
+1. Fast run (<5s): 2 messages (`started`, terminal).
+2. Longer run (>=5s): recurring throttled `ux_progress` updates, then terminal.
 
 ### Free-form path (non-strict)
 
