@@ -277,18 +277,23 @@ class ApifyClient:
             "resultsLimit": max_results,
         }
 
-        # Determine search type and build input
+        # Determine search type and build input using directUrls
+        # The apify/instagram-scraper actor requires directUrls with full
+        # Instagram URLs rather than separate hashtags/usernames fields.
         if urls:
             input_data["directUrls"] = urls
         elif username:
-            input_data["usernames"] = [username.lstrip("@")]
+            clean = username.lstrip("@")
+            input_data["directUrls"] = [f"https://www.instagram.com/{clean}/"]
             input_data["resultsType"] = "posts"
         elif hashtag:
-            input_data["hashtags"] = [hashtag.lstrip("#")]
+            clean = hashtag.lstrip("#")
+            input_data["directUrls"] = [f"https://www.instagram.com/explore/tags/{clean}/"]
             input_data["resultsType"] = "posts"
         elif query:
-            # Instagram doesn't have keyword search, use hashtag search
-            input_data["hashtags"] = [query.replace(" ", "")]
+            # Instagram doesn't have keyword search, use hashtag explore page
+            clean = query.replace(" ", "")
+            input_data["directUrls"] = [f"https://www.instagram.com/explore/tags/{clean}/"]
             input_data["resultsType"] = "posts"
         else:
             raise ValueError("Must provide query, hashtag, username, or urls")
