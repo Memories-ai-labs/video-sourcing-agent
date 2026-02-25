@@ -35,7 +35,8 @@ If `/video_sourcing` is used with no query body, ask for the missing query.
 
 1. Build command with required args:
    - `<skill_dir>/scripts/run_video_query.sh --query "<query>" --event-detail <compact|verbose> --ux-mode three_message --progress-gate-seconds 5`
-2. Start with `exec` using `background: true`.
+2. Start with `exec` using `background: true` and explicit timeout:
+   - `timeout: 420`
 3. Poll with `process` using `action: "poll"` every 2-4 seconds until process exits.
 4. Parse NDJSON output and render only these events:
    - `started` => send: `Starting video sourcing...`
@@ -44,6 +45,12 @@ If `/video_sourcing` is used with no query body, ask for the missing query.
    - terminal event (`complete`, `clarification_needed`, `error`) => send final message as-is
 5. Do not forward raw `progress`, `tool_call`, or `tool_result` events for `/video_sourcing`.
 6. Do not rewrite final answer tone/style; preserve the user's existing OpenClaw personality behavior.
+7. Never launch a second run while a prior run session is still active.
+   - If retrying, call `process` with `action: "kill"` for the prior `sessionId` first.
+8. If process exits without a terminal event, send a concise fallback message that:
+   - states run ended before completion,
+   - includes one actionable next step,
+   - does not start another run automatically.
 
 Behavior target for `/video_sourcing`:
 

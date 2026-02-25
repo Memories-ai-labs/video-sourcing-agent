@@ -104,8 +104,25 @@ class TestRetryExecutor:
         result = await executor.execute_with_retry(tool, query="test")
 
         assert not result.success
-        # Should not retry non-retryable errors (but current impl doesn't distinguish
-        # in the result itself, only in exceptions)
+        assert tool._call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_instagram_is_fail_fast(self):
+        """instagram_search should run a single attempt even for retryable errors."""
+        executor = RetryExecutor(max_retries=3, base_delay=0.01)
+        tool = MockTool(
+            name="instagram_search",
+            results=[
+                ToolResult.fail("timeout error"),
+                ToolResult.ok({"data": "would succeed on retry"}),
+            ],
+        )
+
+        result = await executor.execute_with_retry(tool, query="test")
+
+        assert not result.success
+        assert tool._call_count == 1
+        assert "Failed after 1 attempts" in result.error
 
     @pytest.mark.asyncio
     async def test_execute_with_retry_max_retries_exceeded(self):
@@ -239,6 +256,14 @@ class TestRetryableErrorDetection:
         """Test auth errors are not retryable."""
         executor = RetryExecutor()
         result = ToolResult.fail("Invalid API key")
+        assert executor._is_retryable_error(result) is False
+
+    def test_is_retryable_error_run_failed_bad_request(self):
+        """Apify 400 run-failed errors should not be retried."""
+        executor = RetryExecutor()
+        result = ToolResult.fail(
+            "Apify API error 400: {'error': {'type': 'run-failed', 'message': 'timed-out'}}"
+        )
         assert executor._is_retryable_error(result) is False
 
     def test_is_retryable_error_success(self):

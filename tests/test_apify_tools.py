@@ -54,6 +54,34 @@ class TestApifyClient:
             await client.scrape_twitter()
 
     @pytest.mark.asyncio
+    async def test_scrape_instagram_keyword_query_is_sanitized(self):
+        """Keyword Instagram queries should become sanitized hashtag URLs."""
+        client = ApifyClient(api_token="test")
+        client.run_actor = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+        await client.scrape_instagram(query="AI breakthroughs 2026")
+
+        input_data = client.run_actor.call_args.args[1]  # type: ignore[index]
+        assert input_data["directUrls"] == [
+            "https://www.instagram.com/explore/tags/AIbreakthroughs2026/"
+        ]
+        assert input_data["resultsType"] == "posts"
+
+    @pytest.mark.asyncio
+    async def test_scrape_instagram_hashtag_is_sanitized(self):
+        """Hashtag Instagram queries should strip invalid characters."""
+        client = ApifyClient(api_token="test")
+        client.run_actor = AsyncMock(return_value=[])  # type: ignore[method-assign]
+
+        await client.scrape_instagram(hashtag="#AI breakthroughs 2026!!!")
+
+        input_data = client.run_actor.call_args.args[1]  # type: ignore[index]
+        assert input_data["directUrls"] == [
+            "https://www.instagram.com/explore/tags/AIbreakthroughs2026/"
+        ]
+        assert input_data["resultsType"] == "posts"
+
+    @pytest.mark.asyncio
     async def test_run_actor_reuses_client_for_same_timeout(self):
         """Repeated actor runs with same timeout should reuse one AsyncClient."""
         client = ApifyClient(api_token="test")
@@ -279,8 +307,10 @@ class TestInstagramApifySearchTool:
         """Test search_type has valid enum values."""
         tool = InstagramApifySearchTool()
         search_type = tool.input_schema["properties"]["search_type"]
+        assert "keyword" in search_type["enum"]
         assert "hashtag" in search_type["enum"]
         assert "user" in search_type["enum"]
+        assert search_type["default"] == "keyword"
 
     @pytest.mark.asyncio
     async def test_execute_success(self):
@@ -307,6 +337,59 @@ class TestInstagramApifySearchTool:
         assert result.success
         assert result.data["platform"] == "instagram"
         assert result.data["method"] == "apify"
+
+    @pytest.mark.asyncio
+    async def test_execute_plain_query_uses_keyword_path(self):
+        """Plain multi-word queries should use keyword path, not hashtag path."""
+        tool = InstagramApifySearchTool()
+
+        mock_result = [
+            {
+                "shortCode": "ABC123",
+                "url": "https://instagram.com/reel/ABC123/",
+                "caption": "Test reel",
+                "ownerUsername": "instauser",
+                "likesCount": 500,
+                "commentsCount": 50,
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.scrape_instagram = AsyncMock(return_value=mock_result)
+        tool._client = mock_client
+
+        result = await tool.execute(query="AI breakthroughs 2026")
+
+        assert result.success
+        call_kwargs = mock_client.scrape_instagram.call_args.kwargs
+        assert call_kwargs.get("query") == "AI breakthroughs 2026"
+        assert "hashtag" not in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_execute_hashtag_query_is_sanitized(self):
+        """Hashtag query should pass sanitized hashtag to client."""
+        tool = InstagramApifySearchTool()
+
+        mock_result = [
+            {
+                "shortCode": "ABC123",
+                "url": "https://instagram.com/reel/ABC123/",
+                "caption": "Test reel",
+                "ownerUsername": "instauser",
+                "likesCount": 500,
+                "commentsCount": 50,
+            }
+        ]
+
+        mock_client = MagicMock()
+        mock_client.scrape_instagram = AsyncMock(return_value=mock_result)
+        tool._client = mock_client
+
+        result = await tool.execute(query="#AI breakthroughs 2026")
+
+        assert result.success
+        call_kwargs = mock_client.scrape_instagram.call_args.kwargs
+        assert call_kwargs.get("hashtag") == "AIbreakthroughs2026"
 
 
 class TestInstagramApifyCreatorTool:

@@ -91,6 +91,8 @@ These tools automatically select the fastest available method
 - **tiktok_search**: Search TikTok for videos, hashtags, or creator content.
 - **tiktok_creator_info**: Get TikTok creator profile and recent videos.
 - **instagram_search**: Search Instagram for Reels, hashtags, or creator content.
+  - Use `search_type="hashtag"` only when the user explicitly includes hashtags.
+  - Use `search_type="keyword"` for plain phrases and multi-word queries.
 - **instagram_creator_info**: Get Instagram creator profile and recent posts.
 - **twitter_search**: Search Twitter/X for video tweets. Supports operators (from:, #hashtag).
 - **twitter_profile_info**: Get Twitter profile stats and recent video tweets.
@@ -146,6 +148,7 @@ These tools automatically select the fastest available method
 
 4. **Handle errors pragmatically**:
    - If one platform fails, try an alternative
+   - If Instagram search fails once, continue with other platforms instead of repeating it
    - Report failures plainly without excessive apology
    - Example: "TikTok search unavailable. Here are YouTube results instead."
 

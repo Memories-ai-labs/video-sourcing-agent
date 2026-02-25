@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from typing import Any, cast
 
 import httpx
@@ -283,16 +284,22 @@ class ApifyClient:
         if urls:
             input_data["directUrls"] = urls
         elif username:
-            clean = username.lstrip("@")
+            clean = self._sanitize_username(username)
+            if not clean:
+                raise ValueError("Instagram username is invalid")
             input_data["directUrls"] = [f"https://www.instagram.com/{clean}/"]
             input_data["resultsType"] = "posts"
         elif hashtag:
-            clean = hashtag.lstrip("#")
+            clean = self._sanitize_hashtag(hashtag)
+            if not clean:
+                raise ValueError("Instagram hashtag is invalid")
             input_data["directUrls"] = [f"https://www.instagram.com/explore/tags/{clean}/"]
             input_data["resultsType"] = "posts"
         elif query:
             # Instagram doesn't have keyword search, use hashtag explore page
-            clean = query.replace(" ", "")
+            clean = self._sanitize_hashtag(query)
+            if not clean:
+                raise ValueError("Instagram query does not contain a valid hashtag token")
             input_data["directUrls"] = [f"https://www.instagram.com/explore/tags/{clean}/"]
             input_data["resultsType"] = "posts"
         else:
@@ -303,6 +310,16 @@ class ApifyClient:
             input_data,
             timeout_secs=120,
         )
+
+    @staticmethod
+    def _sanitize_hashtag(value: str) -> str:
+        cleaned = value.lstrip("#").strip()
+        return re.sub(r"[^\w]", "", cleaned, flags=re.UNICODE)
+
+    @staticmethod
+    def _sanitize_username(value: str) -> str:
+        cleaned = value.lstrip("@").strip()
+        return re.sub(r"[^\w.]", "", cleaned, flags=re.UNICODE)
 
     async def scrape_twitter(
         self,

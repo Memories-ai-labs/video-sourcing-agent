@@ -35,6 +35,11 @@ class RetryExecutor:
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.backoff_factor = backoff_factor
+        self._tool_retry_overrides = {
+            # Instagram Apify 400/run-failed errors are typically malformed-input
+            # or actor-level run failures; retries tend to stall completion.
+            "instagram_search": 0,
+        }
 
     async def execute_with_retry(
         self,
@@ -54,8 +59,9 @@ class RetryExecutor:
         """
         last_error = None
         delay = self.base_delay
+        max_retries = self._max_retries_for_tool(tool.name)
 
-        for attempt in range(self.max_retries + 1):
+        for attempt in range(max_retries + 1):
             try:
                 result = await tool.execute(**kwargs)
 
@@ -65,7 +71,7 @@ class RetryExecutor:
 
                 last_error = result.data
                 logger.warning(
-                    f"Tool {tool.name} failed (attempt {attempt + 1}/{self.max_retries + 1}): "
+                    f"Tool {tool.name} failed (attempt {attempt + 1}/{max_retries + 1}): "
                     f"{result.data}"
                 )
 
@@ -73,7 +79,7 @@ class RetryExecutor:
                 last_error = str(e)
                 logger.warning(
                     f"Tool {tool.name} raised exception "
-                    f"(attempt {attempt + 1}/{self.max_retries + 1}): "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): "
                     f"{e}"
                 )
 
@@ -82,7 +88,7 @@ class RetryExecutor:
                     return ToolResult.fail(f"Non-retryable error: {e}")
 
             # Don't delay after last attempt
-            if attempt < self.max_retries:
+            if attempt < max_retries:
                 logger.info(
                     "retry_sleep tool=%s attempt=%d delay_seconds=%.1f",
                     tool.name,
@@ -92,7 +98,7 @@ class RetryExecutor:
                 await asyncio.sleep(delay)
                 delay = min(delay * self.backoff_factor, self.max_delay)
 
-        return ToolResult.fail(f"Failed after {self.max_retries + 1} attempts: {last_error}")
+        return ToolResult.fail(f"Failed after {max_retries + 1} attempts: {last_error}")
 
     async def execute_with_fallback(
         self,
@@ -177,6 +183,18 @@ class RetryExecutor:
         # Check both error and data fields for error message
         error_msg = (str(result.error or "") + str(result.data or "")).lower()
 
+        non_retryable_patterns = [
+            "run-failed",
+            "bad request",
+            "400",
+            "invalid input",
+            "malformed input",
+            "validation error",
+            "unprocessable entity",
+        ]
+        if any(pattern in error_msg for pattern in non_retryable_patterns):
+            return False
+
         # Retryable patterns
         retryable_patterns = [
             "timeout",
@@ -205,6 +223,17 @@ class RetryExecutor:
         error_msg = str(exception).lower()
         exception_type = type(exception).__name__.lower()
 
+        non_retryable_patterns = [
+            "run-failed",
+            "bad request",
+            "invalid input",
+            "malformed input",
+            "validation error",
+            "unprocessable entity",
+        ]
+        if any(pattern in error_msg for pattern in non_retryable_patterns):
+            return False
+
         # Retryable exception types
         retryable_types = [
             "timeout",
@@ -225,6 +254,13 @@ class RetryExecutor:
         ]
 
         return any(pattern in error_msg for pattern in retryable_patterns)
+
+    def _max_retries_for_tool(self, tool_name: str) -> int:
+        """Resolve retry count for a specific tool."""
+        override = self._tool_retry_overrides.get(tool_name)
+        if override is None:
+            return self.max_retries
+        return max(0, int(override))
 
     def _adapt_kwargs_for_tool(
         self,

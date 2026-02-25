@@ -63,7 +63,7 @@ Returns post/reel data including views, likes, comments, creator info.
 Example queries:
 - Search for "#fitness" to find fitness-related content
 - Search for "@therock" to find a creator's content
-- Search for "cooking recipes" (will search as hashtag)"""
+- Search for "cooking recipes" (keyword search)"""
 
     @property
     def input_schema(self) -> dict[str, Any]:
@@ -72,16 +72,17 @@ Example queries:
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Search query (hashtag with #, or @username)",
+                    "description": "Search query (keyword phrase, hashtag with #, or @username)",
                 },
                 "search_type": {
                     "type": "string",
-                    "enum": ["hashtag", "user"],
+                    "enum": ["keyword", "hashtag", "user"],
                     "description": (
-                        "Type of search: 'hashtag' for hashtag content, "
+                        "Type of search: 'keyword' for general query terms, "
+                        "'hashtag' for hashtag content, "
                         "'user' for creator content"
                     ),
-                    "default": "hashtag",
+                    "default": "keyword",
                 },
                 "max_results": {
                     "type": "integer",
@@ -103,7 +104,7 @@ Example queries:
 
         Args:
             query: Search query.
-            search_type: Type of search (hashtag, user).
+            search_type: Type of search (keyword, hashtag, user).
             max_results: Maximum results to return.
             sort_by: How to sort results (views, likes, engagement, recent).
 
@@ -111,36 +112,45 @@ Example queries:
             ToolResult with list of videos/posts.
         """
         query = kwargs.get("query", "")
-        search_type = kwargs.get("search_type", "hashtag")
+        search_type = kwargs.get("search_type", "keyword")
         max_results = min(kwargs.get("max_results", 20), 50)
         sort_by = kwargs.get("sort_by", "views")
 
         if not query:
             return ToolResult.fail("Query is required")
+        query = query.strip()
+        if not query:
+            return ToolResult.fail("Query must not be empty")
 
         # Over-fetch to improve quality after sorting (2x requested, capped at 100)
         fetch_count = min(max_results * 2, 100)
 
         try:
-            # Determine search parameters based on query format
+            # Determine search parameters based on query format.
+            # Keyword is the safe default for plain multi-word inputs.
             if query.startswith("@") or search_type == "user":
-                username = query.lstrip("@")
+                username = self._normalize_username(query)
+                if not username:
+                    return ToolResult.fail("Instagram username is invalid")
                 raw_results = await self.client.scrape_instagram(
                     username=username, max_results=fetch_count
                 )
                 effective_search_type = "user"
-            elif query.startswith("#") or search_type == "hashtag":
-                hashtag = query.lstrip("#")
+            elif query.startswith("#") or (
+                search_type == "hashtag" and " " not in query.strip()
+            ):
+                hashtag = self._sanitize_hashtag(query)
+                if not hashtag:
+                    return ToolResult.fail("Instagram hashtag is invalid")
                 raw_results = await self.client.scrape_instagram(
                     hashtag=hashtag, max_results=fetch_count
                 )
                 effective_search_type = "hashtag"
             else:
-                # Default to hashtag search for general queries
                 raw_results = await self.client.scrape_instagram(
                     query=query, max_results=fetch_count
                 )
-                effective_search_type = "hashtag"
+                effective_search_type = "keyword"
 
             # Parse results into Video models
             videos, parse_stats = self._parse_apify_results(raw_results, query)
@@ -179,6 +189,18 @@ Example queries:
         except Exception as e:
             logger.error(f"Instagram Apify search error: {e}")
             return ToolResult.fail(f"Instagram search error: {e}")
+
+    @staticmethod
+    def _sanitize_hashtag(value: str) -> str:
+        cleaned = value.lstrip("#").strip()
+        hashtag = re.sub(r"[^\w]", "", cleaned, flags=re.UNICODE)
+        return hashtag
+
+    @staticmethod
+    def _normalize_username(value: str) -> str:
+        cleaned = value.lstrip("@").strip()
+        username = re.sub(r"[^\w.]", "", cleaned, flags=re.UNICODE)
+        return username
 
     def _parse_apify_results(
         self, raw_results: list[dict[str, Any]], query: str

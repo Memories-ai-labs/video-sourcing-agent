@@ -107,6 +107,8 @@ Free-form:
 1. Immediate start message: `Starting video sourcing...`
 2. Throttled middle progress messages when runtime reaches 5+ seconds.
 3. Final terminal message (`complete`, `clarification_needed`, or `error`).
+4. Use explicit command timeout (`exec.timeout: 420`) for long runs.
+5. If retrying manually, kill prior process session before starting a new run.
 
 ## Troubleshooting
 
