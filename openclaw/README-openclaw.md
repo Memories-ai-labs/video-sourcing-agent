@@ -110,21 +110,22 @@ Free-form:
 4. Use explicit command timeout (`exec.timeout: 420`) for long runs.
 5. If retrying manually, kill prior process session before starting a new run.
 
-## Typing indicator reliability
+## Typing indicator and live progress
 
-To avoid sticky Telegram `typing...` indicators during long `/video_sourcing` runs:
+For seamless UX during long `/video_sourcing` runs:
 
 ```bash
-openclaw config set agents.defaults.typingMode '"message"'
-openclaw config set agents.defaults.typingIntervalSeconds 6
+openclaw config set agents.defaults.typingMode '"instant"'
+openclaw config set agents.defaults.typingIntervalSeconds 3
+openclaw config unset agents.defaults.blockStreamingDefault
 openclaw gateway restart
 ```
 
 Expected behavior:
 
-1. Start/progress/final messages remain unchanged.
-2. Typing appears only when visible text is being emitted.
-3. Typing clears shortly after terminal output (typically within 5-8 seconds).
+1. Typing indicator appears immediately when the skill starts.
+2. Progress messages stream live as the agent works.
+3. Final response replaces the progress preview.
 
 ## Troubleshooting
 
@@ -135,10 +136,10 @@ Expected behavior:
 3. Bootstrap clone/sync failures
    - Verify host network access to GitHub and that tag `v0.2.3` exists.
 4. `/video_sourcing` returns only final response without progress
-   - Restart OpenClaw Gateway after skill updates.
+   - Ensure `blockStreamingDefault` is not set: `openclaw config unset agents.defaults.blockStreamingDefault`.
+   - Restart OpenClaw Gateway after config changes.
 5. Override path invalid
    - Ensure `VIDEO_SOURCING_AGENT_ROOT` points to a valid repository directory.
 6. Typing indicator remains stuck after terminal response
-   - Set `agents.defaults.typingMode` to `"message"` and restart the gateway.
-   - Fallback: `openclaw config set agents.defaults.typingMode '"never"'`.
+   - Fallback: set `agents.defaults.typingMode` to `"message"` and restart the gateway.
    - Rollback: unset typing keys with `openclaw config unset agents.defaults.typingMode` and `openclaw config unset agents.defaults.typingIntervalSeconds`.

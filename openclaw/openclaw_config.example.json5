@@ -54,12 +54,11 @@
   // This skill is intended to run on host runtime (not sandboxed).
   agents: {
     defaults: {
-      // Show typing only when visible message text is being produced.
-      // This avoids long-lived typing indicators during process polling.
-      typingMode: "message",
-      // Keep Telegram typing refresh cadence explicit and stable.
-      typingIntervalSeconds: 6,
-      blockStreamingDefault: "on",
+      // Show typing immediately when the skill starts running.
+      // "instant" ensures the indicator appears during long-running subprocess skills.
+      typingMode: "instant",
+      // Telegram auto-expires typing after ~5s. Refresh at 3s for seamless indicator.
+      typingIntervalSeconds: 3,
       sandbox: {
         mode: "off",
       },
