@@ -470,7 +470,7 @@ class QueryParser:
         url_lower = url.lower()
         video_patterns = [
             r"(?:youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/)",
-            r"tiktok\.com/.+/video/",
+            r"(?:tiktok\.com/(?:.+/video/|t/)|(?:vm|vt)\.tiktok\.com/)",
             r"instagram\.com/(?:reel|reels)/",
             r"(?:twitter\.com|x\.com)/[^/]+/status/",
             r"\.(?:mp4|webm|mov|avi|mkv)(?:$|[?#])",

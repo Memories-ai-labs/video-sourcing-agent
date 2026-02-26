@@ -102,6 +102,36 @@ async def test_parse_direct_video_file_url_enables_analysis():
 
 
 @pytest.mark.asyncio
+async def test_parse_tiktok_vm_share_url_enables_analysis():
+    """TikTok vm share links should be treated as supported video URLs."""
+    parser = QueryParser(
+        gemini_client=StubGemini([
+            '{"query_type":"general","needs_video_analysis":false,"time_frame":"past_week"}'
+        ])
+    )
+
+    parsed = await parser.parse("transcribe this video https://vm.tiktok.com/ZM123abc/")
+    assert parsed.needs_video_analysis is True
+    assert parsed.video_urls == ["https://vm.tiktok.com/ZM123abc/"]
+
+
+@pytest.mark.asyncio
+async def test_parse_tiktok_t_share_url_enables_analysis():
+    """TikTok /t/ share links should be treated as supported video URLs."""
+    parser = QueryParser(
+        gemini_client=StubGemini([
+            '{"query_type":"general","needs_video_analysis":false,"time_frame":"past_week"}'
+        ])
+    )
+
+    parsed = await parser.parse(
+        "transcribe this video https://www.tiktok.com/t/ZMabcde/"
+    )
+    assert parsed.needs_video_analysis is True
+    assert parsed.video_urls == ["https://www.tiktok.com/t/ZMabcde/"]
+
+
+@pytest.mark.asyncio
 async def test_parse_what_does_this_video_say_with_url_enables_analysis():
     """Natural language video-transcript asks should stay in analysis mode."""
     parser = QueryParser(
