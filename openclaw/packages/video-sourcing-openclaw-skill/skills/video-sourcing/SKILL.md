@@ -38,13 +38,14 @@ If `/video_sourcing` is used with no query body, ask for the missing query.
 2. Start with `exec` using `background: true` and explicit timeout:
    - `timeout: 420`
 3. Poll with `process` using `action: "poll"` every 2-4 seconds until process exits.
-4. Parse NDJSON output and render only these events:
-   - `started` => send: `Starting video sourcing...`
-   - `ux_progress` => send concise middle progress updates from `summary` (throttled by runner)
+4. Parse NDJSON output and render only these events, using your persona voice for all user-facing text:
+   - `started` => send a brief message conveying that video sourcing has begun, written in your persona voice
+   - `ux_progress` => read the `summary` field as structured status data and compose a concise,
+     natural progress update in your persona voice (do not echo `summary` verbatim)
      Send each `ux_progress` as a separate assistant message in Telegram.
    - terminal event (`complete`, `clarification_needed`, `error`) => send final message as-is
 5. Do not forward raw `progress`, `tool_call`, or `tool_result` events for `/video_sourcing`.
-6. Do not rewrite final answer tone/style; preserve the user's existing OpenClaw personality behavior.
+6. Preserve the user's existing OpenClaw personality behavior across all messages — progress and final alike.
 7. Never launch a second run while a prior run session is still active.
    - If retrying, call `process` with `action: "kill"` for the prior `sessionId` first.
 8. If process exits without a terminal event, send a concise fallback message that:
