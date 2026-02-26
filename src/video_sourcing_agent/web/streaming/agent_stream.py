@@ -14,6 +14,7 @@ from google.genai import types
 
 from video_sourcing_agent.agent.clarification import ClarificationManager
 from video_sourcing_agent.agent.prompts import build_system_prompt
+from video_sourcing_agent.agent.tool_policy import apply_tool_call_policy
 from video_sourcing_agent.api.gemini_client import GeminiClient
 from video_sourcing_agent.config.pricing import get_pricing
 from video_sourcing_agent.config.settings import get_settings
@@ -274,6 +275,25 @@ class StreamingAgentWrapper:
 
                 # Process tool calls
                 tool_calls = self.gemini.get_tool_calls(response)
+                tool_calls, blocked_tools, forced_video_search = apply_tool_call_policy(
+                    tool_calls,
+                    parsed_query=parsed_query,
+                    user_query=user_query,
+                    current_step=session.current_step,
+                )
+                if blocked_tools:
+                    logger.info(
+                        "stream_agent_tool_policy_blocked session_id=%s step=%d blocked=%s",
+                        session_id,
+                        session.current_step + 1,
+                        ",".join(blocked_tools),
+                    )
+                if forced_video_search:
+                    logger.info(
+                        "stream_agent_tool_policy_forced_video_search session_id=%s step=%d",
+                        session_id,
+                        session.current_step + 1,
+                    )
 
                 # Add model response to messages
                 model_content = self.gemini.get_response_content(response)
@@ -363,6 +383,17 @@ class StreamingAgentWrapper:
                                 response={"result": result_str},
                             )
                         )
+                elif blocked_tools:
+                    # Steer the model away from deep-analysis tools in discovery flows.
+                    messages.append(types.Content(
+                        role="user",
+                        parts=[types.Part(
+                            text=(
+                                "Policy note: Deep transcript/video-analysis tools are disabled "
+                                "for this query. Continue with discovery/search tools."
+                            )
+                        )],
+                    ))
 
                 # Add tool results to messages
                 if function_response_parts:

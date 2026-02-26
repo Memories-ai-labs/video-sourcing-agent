@@ -274,7 +274,7 @@ class TestSocialMediaMAITranscriptTool:
         tool = SocialMediaMAITranscriptTool()
 
         mock_client = MagicMock()
-        mock_client.detect_platform.return_value = "youtube"
+        mock_client.detect_platform.return_value = "instagram"
         # API returns nested data: response.data.videoTranscript
         mock_client.get_mai_transcript = AsyncMock(return_value={
             "status": "completed",
@@ -286,12 +286,12 @@ class TestSocialMediaMAITranscriptTool:
         tool._client = mock_client
 
         result = await tool.execute(
-            video_url="https://youtube.com/watch?v=abc123",
+            video_url="https://instagram.com/reel/ABC123",
             wait_for_completion=True,
         )
 
         assert result.success
-        assert result.data["platform"] == "youtube"
+        assert result.data["platform"] == "instagram"
         assert result.data["status"] == "completed"
         assert "walking through a park" in result.data["video_transcript"]
         assert "Hello everyone" in result.data["audio_transcript"]
@@ -326,7 +326,7 @@ class TestSocialMediaMAITranscriptTool:
         tool = SocialMediaMAITranscriptTool()
 
         mock_client = MagicMock()
-        mock_client.detect_platform.return_value = "youtube"
+        mock_client.detect_platform.return_value = "instagram"
         mock_client.get_mai_transcript = AsyncMock(return_value={
             "status": "pending",
             "data": {"task_id": "nested_task_123"},
@@ -334,7 +334,7 @@ class TestSocialMediaMAITranscriptTool:
         tool._client = mock_client
 
         result = await tool.execute(
-            video_url="https://youtube.com/watch?v=abc123",
+            video_url="https://instagram.com/reel/ABC123",
             wait_for_completion=False,
         )
 
@@ -347,7 +347,7 @@ class TestSocialMediaMAITranscriptTool:
         tool = SocialMediaMAITranscriptTool()
 
         mock_client = MagicMock()
-        mock_client.detect_platform.return_value = "youtube"
+        mock_client.detect_platform.return_value = "tiktok"
         mock_client.get_mai_transcript = AsyncMock(return_value={
             "task_id": "task_abc123",
             "status": "pending",
@@ -355,7 +355,7 @@ class TestSocialMediaMAITranscriptTool:
         tool._client = mock_client
 
         result = await tool.execute(
-            video_url="https://youtube.com/watch?v=abc123",
+            video_url="https://tiktok.com/@user/video/123",
             wait_for_completion=False,
             webhook_url="https://example.com/callback",
         )
@@ -370,13 +370,13 @@ class TestSocialMediaMAITranscriptTool:
         tool = SocialMediaMAITranscriptTool()
 
         mock_client = MagicMock()
-        mock_client.detect_platform.return_value = "youtube"
+        mock_client.detect_platform.return_value = "instagram"
         mock_client.get_mai_transcript = AsyncMock(
             side_effect=TimeoutError("Task did not complete in 300s")
         )
         tool._client = mock_client
 
-        result = await tool.execute(video_url="https://youtube.com/watch?v=abc")
+        result = await tool.execute(video_url="https://instagram.com/reel/ABC")
 
         assert not result.success
         assert "timed out" in result.error.lower()
@@ -404,16 +404,106 @@ class TestSocialMediaMAITranscriptTool:
         tool = SocialMediaMAITranscriptTool()
 
         mock_client = MagicMock()
-        mock_client.detect_platform.return_value = "twitter"
+        mock_client.detect_platform.return_value = "instagram"
         mock_client.get_mai_transcript = AsyncMock(
             side_effect=Exception("Network connection failed")
         )
         tool._client = mock_client
 
-        result = await tool.execute(video_url="https://twitter.com/user/status/123")
+        result = await tool.execute(video_url="https://instagram.com/reel/ABC")
 
         assert not result.success
         assert "network" in result.error.lower() or "error" in result.error.lower()
+
+    @pytest.mark.asyncio
+    async def test_execute_blocks_long_form_youtube(self):
+        """MAI should be blocked for long-form YouTube by default."""
+        tool = SocialMediaMAITranscriptTool()
+
+        mock_client = MagicMock()
+        mock_client.detect_platform.return_value = "youtube"
+        mock_client.get_mai_transcript = AsyncMock(return_value={})
+        tool._client = mock_client
+
+        result = await tool.execute(video_url="https://youtube.com/watch?v=abc123")
+
+        assert not result.success
+        assert "short-form" in result.error.lower()
+        mock_client.get_mai_transcript.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_blocks_twitter_by_default(self):
+        """MAI should be blocked for Twitter/X URLs by default."""
+        tool = SocialMediaMAITranscriptTool()
+
+        mock_client = MagicMock()
+        mock_client.detect_platform.return_value = "twitter"
+        mock_client.get_mai_transcript = AsyncMock(return_value={})
+        tool._client = mock_client
+
+        result = await tool.execute(video_url="https://twitter.com/user/status/123")
+
+        assert not result.success
+        assert "short-form" in result.error.lower()
+        mock_client.get_mai_transcript.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_execute_allows_youtube_shorts(self):
+        """YouTube Shorts URLs are allowed for MAI."""
+        tool = SocialMediaMAITranscriptTool()
+
+        mock_client = MagicMock()
+        mock_client.detect_platform.return_value = "youtube"
+        mock_client.get_mai_transcript = AsyncMock(return_value={
+            "status": "completed",
+            "data": {"videoTranscript": "Visual", "audioTranscript": "Audio"},
+        })
+        tool._client = mock_client
+
+        result = await tool.execute(video_url="https://youtube.com/shorts/abc123")
+
+        assert result.success
+        assert result.data["platform"] == "youtube"
+
+    @pytest.mark.asyncio
+    async def test_execute_caps_max_wait_seconds(self):
+        """Max wait should be capped to bounded in-run timeout."""
+        tool = SocialMediaMAITranscriptTool()
+
+        mock_client = MagicMock()
+        mock_client.detect_platform.return_value = "tiktok"
+        mock_client.get_mai_transcript = AsyncMock(return_value={"task_id": "task_abc123"})
+        tool._client = mock_client
+
+        result = await tool.execute(
+            video_url="https://tiktok.com/@user/video/123",
+            wait_for_completion=False,
+            max_wait_seconds=999,
+        )
+
+        assert result.success
+        call_kwargs = mock_client.get_mai_transcript.call_args.kwargs
+        assert call_kwargs["max_wait"] == 90.0
+
+    @pytest.mark.asyncio
+    async def test_execute_invalid_max_wait_defaults_to_bounded_value(self):
+        """Invalid max_wait_seconds input should fall back to default bounded wait."""
+        tool = SocialMediaMAITranscriptTool()
+
+        mock_client = MagicMock()
+        mock_client.detect_platform.return_value = "tiktok"
+        mock_client.get_mai_transcript = AsyncMock(return_value={"task_id": "task_abc123"})
+        tool._client = mock_client
+
+        result = await tool.execute(
+            video_url="https://tiktok.com/@user/video/123",
+            wait_for_completion=False,
+            max_wait_seconds="invalid",
+        )
+
+        assert result.success
+        call_kwargs = mock_client.get_mai_transcript.call_args.kwargs
+        assert call_kwargs["max_wait"] == 90.0
 
 
 class TestVLMVideoAnalysisTool:

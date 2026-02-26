@@ -124,6 +124,7 @@ class QueryParser:
                 parsed = self._parse_extraction_response(text, query)
                 # Add local regex extraction as fallback/enhancement
                 parsed = self._enhance_with_local_extraction(parsed, query)
+                parsed = self._apply_video_analysis_guard(parsed, query)
                 return parsed
 
         except Exception:
@@ -131,7 +132,7 @@ class QueryParser:
             pass
 
         # Fallback to local extraction
-        return self._local_extraction(query)
+        return self._apply_video_analysis_guard(self._local_extraction(query), query)
 
     def _parse_extraction_response(self, text: str, original_query: str) -> ParsedQuery:
         """Parse Gemini's slot extraction response.
@@ -343,6 +344,138 @@ class QueryParser:
         parsed.quantity = max(1, min(parsed.quantity, 100))
 
         return parsed
+
+    def _apply_video_analysis_guard(self, parsed: ParsedQuery, query: str) -> ParsedQuery:
+        """Deterministically gate deep analysis to explicit video-analysis requests.
+
+        This prevents broad discovery prompts from intermittently toggling
+        `needs_video_analysis=True` due to LLM extraction variance.
+        """
+        query_lower = query.lower()
+
+        extracted_urls = self._extract_urls(query)
+        supported_video_urls = [
+            url for url in extracted_urls if self._is_supported_video_url(url)
+        ]
+        parsed.video_urls = supported_video_urls
+
+        has_any_url = bool(extracted_urls)
+        has_supported_video_url = bool(supported_video_urls)
+        llm_intent = (
+            parsed.needs_video_analysis or parsed.query_type == QueryType.VIDEO_ANALYSIS
+        )
+        local_intent = any(
+            phrase in query_lower
+            for phrase in [
+                "analyze",
+                "analyse",
+                "analysis",
+                "transcript",
+                "transcribe",
+                "transcription",
+                "summarize",
+                "summarise",
+                "summary",
+                "key points",
+                "highlights",
+                "message",
+                "messaging",
+                "break down",
+                "breakdown",
+                "describe",
+                "what happens",
+                "what is shown",
+                "what's in",
+                "whats in",
+                "what does this video say",
+            ]
+        )
+        has_specific_video_reference = any(
+            token in query_lower
+            for token in [
+                "this video",
+                "that video",
+                "this clip",
+                "that clip",
+                "this reel",
+                "this short",
+            ]
+        )
+        explicit_video_reference = has_specific_video_reference or has_supported_video_url
+        unsupported_url_present = has_any_url and not has_supported_video_url
+        has_discovery_link_intent = any(
+            phrase in query_lower
+            for phrase in [
+                "find similar",
+                "similar videos",
+                "videos like",
+                "find videos like",
+                "related videos",
+                "more videos like",
+                "recommend videos",
+            ]
+        )
+
+        if unsupported_url_present:
+            # Prevent deep analysis for non-video links (e.g., blog/article URLs).
+            parsed.needs_video_analysis = False
+            if parsed.query_type == QueryType.VIDEO_ANALYSIS:
+                parsed.query_type = QueryType.GENERAL
+            return parsed
+
+        if explicit_video_reference and (
+            local_intent or (llm_intent and not has_discovery_link_intent)
+        ):
+            parsed.needs_video_analysis = True
+            return parsed
+
+        # Default discovery-safe behavior: do not enable deep analysis.
+        parsed.needs_video_analysis = False
+        if parsed.query_type == QueryType.VIDEO_ANALYSIS:
+            parsed.query_type = QueryType.GENERAL
+
+        return parsed
+
+    def _extract_urls(self, query: str) -> list[str]:
+        """Extract URLs from a query and normalize trailing punctuation.
+
+        Supports both fully-qualified URLs (http/https) and common bare links
+        like `youtube.com/watch?v=...`.
+        """
+        raw_urls = re.findall(
+            r"(?:https?://)?(?:www\.)?[a-z0-9.-]+\.[a-z]{2,}(?:/[^\s<>\"]*)?",
+            query,
+            flags=re.IGNORECASE,
+        )
+        seen: set[str] = set()
+        normalized: list[str] = []
+        for url in raw_urls:
+            cleaned = url.rstrip(".,!?;:)]}'\"")
+            if not cleaned:
+                continue
+            if not re.match(r"^https?://", cleaned, flags=re.IGNORECASE):
+                cleaned = f"https://{cleaned}"
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                normalized.append(cleaned)
+        return normalized
+
+    def _is_supported_video_url(self, url: str) -> bool:
+        """Check whether a URL is a supported social/video link.
+
+        Supports:
+        - Social video pages (YouTube/TikTok/Instagram/X)
+        - Direct video files (.mp4, .webm, .mov, .avi, .mkv)
+        """
+        url_lower = url.lower()
+        video_patterns = [
+            r"(?:youtube\.com/watch\?v=|youtube\.com/shorts/|youtu\.be/)",
+            r"tiktok\.com/.+/video/",
+            r"instagram\.com/(?:reel|reels)/",
+            r"(?:twitter\.com|x\.com)/[^/]+/status/",
+            r"\.(?:mp4|webm|mov|avi|mkv)(?:$|[?#])",
+        ]
+        return any(re.search(pattern, url_lower) for pattern in video_patterns)
 
     def _detect_platforms(self, query_lower: str) -> list[str]:
         """Detect platforms from query text."""

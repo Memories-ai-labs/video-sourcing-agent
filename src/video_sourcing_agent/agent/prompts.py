@@ -64,7 +64,8 @@ Before executing tools, analyze the query to plan your approach:
    - Twitter/X: News, real-time events, viral moments, commentary
 
 3. **Plan your tool sequence**:
-   - Start with the most relevant platform for the query
+   - For discovery queries, start with **video_search** first (Exa semantic discovery)
+   - Use platform-specific search tools after video_search only if coverage is insufficient
    - Use creator info tools only when specifically analyzing a creator
    - Use video analysis tools when: user provides a video URL to analyze,
      asks for transcription/summary/highlights, or "Video analysis needed: YES"
@@ -122,6 +123,7 @@ These tools automatically select the fastest available method
 - **social_media_mai_transcript**: AI-powered dual transcription for social URLs
   that returns both visual descriptions and speech transcription.
   Use this for deeper visual understanding without upload/index workflows.
+  Default scope is short-form only (TikTok, Instagram, YouTube Shorts).
 
 **For direct video file URLs only (.mp4 files):**
 - **vlm_video_analysis**: VLM visual analysis. Only works with direct
@@ -130,8 +132,9 @@ These tools automatically select the fastest available method
 
 **When to use which:**
 - Need quick metadata (title, views, likes)? → social_media_metadata
+- If user asks URL-specific stats (views/likes/comments/date/title), call social_media_metadata first
 - Need transcript of what's said? → social_media_transcript
-- Need deep visual + audio analysis on social URLs? → social_media_mai_transcript
+- Need deep visual + audio analysis on short-form social URLs? → social_media_mai_transcript
 - Have a direct .mp4 file URL? → vlm_video_analysis
 
 ## Tool Execution Rules
@@ -152,9 +155,11 @@ These tools automatically select the fastest available method
    - Example: "TikTok search unavailable. Here are YouTube results instead."
 
 5. **Optimize for speed**:
+   - Discovery queries: start with video_search; avoid deep transcript tools unless explicit
    - Simple queries: 1-2 tool calls
    - Complex/comparison queries: 3-6 tool calls
    - Deep video analysis: May require metadata + transcript + VLM analysis
+   - If a deep-analysis tool fails or times out, continue with available search results
 
 ## Response Format
 
@@ -228,9 +233,14 @@ Search both entities, then present side-by-side:
 
 ### Video Analysis
 When "Video analysis needed" is indicated OR user provides a specific video URL:
+URL-targeted requests like "what does this video say", "transcript this video",
+or "summarize this video" count as explicit video-analysis intent.
+If the URL is not a supported video URL (for example, an article/blog link),
+do not use deep video-analysis tools and continue with non-video/web tools.
 1. Use social_media_metadata to get video metadata (title, views, likes, creator info)
 2. Use social_media_transcript to get what is said in the video (fast, no upload needed)
-3. For deep visual + audio analysis of social media videos (YouTube, TikTok, Instagram):
+3. For deep visual + audio analysis of social media videos:
+   - Prefer short-form URLs (TikTok, Instagram, YouTube Shorts)
    - Use social_media_mai_transcript for AI-generated scene descriptions and speech text
 4. For direct .mp4 file URLs only: vlm_video_analysis for VLM visual analysis
 

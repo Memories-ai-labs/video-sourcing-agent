@@ -125,6 +125,24 @@ class TestRetryExecutor:
         assert "Failed after 1 attempts" in result.error
 
     @pytest.mark.asyncio
+    async def test_execute_with_retry_mai_is_fail_fast(self):
+        """social_media_mai_transcript should run a single attempt on retryable errors."""
+        executor = RetryExecutor(max_retries=3, base_delay=0.01)
+        tool = MockTool(
+            name="social_media_mai_transcript",
+            results=[
+                ToolResult.fail("timeout error"),
+                ToolResult.ok({"data": "would succeed on retry"}),
+            ],
+        )
+
+        result = await executor.execute_with_retry(tool, query="test")
+
+        assert not result.success
+        assert tool._call_count == 1
+        assert "Failed after 1 attempts" in result.error
+
+    @pytest.mark.asyncio
     async def test_execute_with_retry_max_retries_exceeded(self):
         """Test failure after max retries exceeded."""
         executor = RetryExecutor(max_retries=2, base_delay=0.01)

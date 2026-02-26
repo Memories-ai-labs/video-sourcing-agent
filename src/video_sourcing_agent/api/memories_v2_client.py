@@ -55,6 +55,45 @@ class MemoriesV2Client:
             "Content-Type": "application/json",
         }
 
+    def _is_success_code(self, code: Any) -> bool:
+        """Evaluate whether an API envelope code represents success."""
+        if code is None:
+            return True
+        return str(code).strip() in {"0000", "0", ""}
+
+    def _format_api_error(self, payload: dict[str, Any], endpoint: str) -> str:
+        """Create a concise error message from a Memories API envelope."""
+        code = payload.get("code")
+        msg = payload.get("msg") or payload.get("message") or payload.get("error")
+        code_str = str(code) if code is not None else "unknown"
+        msg_str = str(msg).strip() if msg is not None else "Unknown error"
+        return f"Memories API error at {endpoint}: code={code_str}, message={msg_str}"
+
+    def _ensure_api_success(self, payload: dict[str, Any], endpoint: str) -> None:
+        """Raise when an API-level failure envelope is returned with HTTP 200."""
+        failed = payload.get("failed")
+        success = payload.get("success")
+        code = payload.get("code")
+
+        if failed is True:
+            raise RuntimeError(self._format_api_error(payload, endpoint))
+        if success is False:
+            raise RuntimeError(self._format_api_error(payload, endpoint))
+        if not self._is_success_code(code):
+            raise RuntimeError(self._format_api_error(payload, endpoint))
+
+    def _decode_json_response(self, response: Any, endpoint: str) -> dict[str, Any]:
+        """Decode and validate JSON responses with envelope-aware error handling."""
+        response.raise_for_status()
+        payload_raw = response.json()
+        if not isinstance(payload_raw, dict):
+            raise RuntimeError(
+                f"Unexpected non-object response from Memories API at {endpoint}"
+            )
+        payload = cast(dict[str, Any], payload_raw)
+        self._ensure_api_success(payload, endpoint)
+        return payload
+
     async def _get_client(self, timeout: float) -> Any:
         """Get or create a shared AsyncClient for the given timeout."""
         key = float(timeout)
@@ -114,8 +153,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/youtube/video/metadata")
 
     async def get_youtube_transcript(
         self,
@@ -140,8 +178,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/youtube/video/transcript")
 
     # -------------------------------------------------------------------------
     # TikTok endpoints
@@ -170,8 +207,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/tiktok/video/metadata")
 
     async def get_tiktok_transcript(
         self,
@@ -196,8 +232,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/tiktok/video/transcript")
 
     # -------------------------------------------------------------------------
     # Instagram endpoints
@@ -226,8 +261,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/instagram/video/metadata")
 
     async def get_instagram_transcript(
         self,
@@ -252,8 +286,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/instagram/video/transcript")
 
     # -------------------------------------------------------------------------
     # Twitter endpoints
@@ -282,8 +315,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/twitter/video/metadata")
 
     async def get_twitter_transcript(
         self,
@@ -308,8 +340,7 @@ class MemoriesV2Client:
                 "channel": channel or self.default_channel,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/twitter/video/transcript")
 
     # -------------------------------------------------------------------------
     # VLM Chat endpoint
@@ -371,8 +402,7 @@ class MemoriesV2Client:
                 "temperature": temperature,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/vu/chat/completions")
 
     async def analyze_video_with_vlm(
         self,
@@ -532,8 +562,7 @@ class MemoriesV2Client:
             headers=headers,
             files=files,
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, "/upload")
 
     async def get_asset_metadata(self, asset_id: str) -> dict[str, Any]:
         """Get metadata for an uploaded asset.
@@ -549,8 +578,7 @@ class MemoriesV2Client:
             f"{self.base_url}/{asset_id}/metadata",
             headers=self._headers(),
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, f"/{asset_id}/metadata")
 
     async def delete_asset(self, asset_id: str) -> bool:
         """Delete an uploaded asset.
@@ -598,8 +626,7 @@ class MemoriesV2Client:
                 "speaker_diarization": speaker_diarization,
             },
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, f"/asset/{asset_id}/transcription")
 
     # -------------------------------------------------------------------------
     # Utility methods
@@ -924,8 +951,10 @@ class MemoriesV2Client:
             headers=self._headers(),
             json=payload,
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(
+            response,
+            f"/{platform}/video/mai/transcript",
+        )
 
     async def get_mai_transcript_status(
         self,
@@ -950,8 +979,7 @@ class MemoriesV2Client:
             f"{self.base_url}/task/{task_id}",
             headers=self._headers(),
         )
-        response.raise_for_status()
-        return cast(dict[str, Any], response.json())
+        return self._decode_json_response(response, f"/task/{task_id}")
 
     async def wait_for_mai_transcript(
         self,

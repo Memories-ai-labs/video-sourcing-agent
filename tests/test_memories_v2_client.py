@@ -188,6 +188,64 @@ class TestMemoriesV2ClientYouTube:
         assert result["views"] == 1000000
 
     @pytest.mark.asyncio
+    async def test_get_youtube_metadata_envelope_failure_raises(self, client):
+        """API envelope failures (HTTP 200) should raise RuntimeError."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "code": "0409",
+            "msg": "Service is busy, try later",
+            "success": False,
+            "failed": True,
+            "data": None,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+            with pytest.raises(RuntimeError) as exc_info:
+                await client.get_youtube_metadata("https://youtube.com/watch?v=abc123")
+
+        assert "code=0409" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_get_youtube_metadata_code_only_failure_raises(self, client):
+        """Non-success code should fail even without explicit success/failed flags."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "code": "0429",
+            "msg": "Rate limit exceeded",
+            "data": None,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+            with pytest.raises(RuntimeError) as exc_info:
+                await client.get_youtube_metadata("https://youtube.com/watch?v=abc123")
+
+        assert "code=0429" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_get_youtube_metadata_non_object_payload_raises(self, client):
+        """Non-dict JSON payloads should raise a clear runtime error."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = [{"unexpected": "shape"}]
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_client.return_value.__aenter__.return_value.post = AsyncMock(
+                return_value=mock_response
+            )
+            with pytest.raises(RuntimeError) as exc_info:
+                await client.get_youtube_metadata("https://youtube.com/watch?v=abc123")
+
+        assert "non-object response" in str(exc_info.value).lower()
+
+    @pytest.mark.asyncio
     async def test_get_youtube_transcript_success(self, client):
         """Test successful YouTube transcript extraction."""
         mock_response = MagicMock()
@@ -756,6 +814,27 @@ class TestMemoriesV2ClientMAITranscript:
         assert result["status"] == "completed"
         assert "videoTranscript" in result
         assert "audioTranscript" in result
+
+    @pytest.mark.asyncio
+    async def test_get_mai_transcript_status_envelope_failure_raises(self, client):
+        """MAI status envelope failures should raise RuntimeError."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {
+            "code": "0409",
+            "msg": "Service is busy, try later",
+            "success": False,
+            "failed": True,
+            "data": None,
+        }
+        mock_response.raise_for_status = MagicMock()
+
+        with patch("httpx.AsyncClient") as mock_client:
+            mock_get = AsyncMock(return_value=mock_response)
+            mock_client.return_value.__aenter__.return_value.get = mock_get
+            with pytest.raises(RuntimeError) as exc_info:
+                await client.get_mai_transcript_status("task_123")
+
+        assert "code=0409" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_wait_for_mai_transcript_success(self, client):

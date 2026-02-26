@@ -229,6 +229,8 @@ class SocialMediaMAITranscriptTool(BaseTool):
     def __init__(self) -> None:
         """Initialize MAI transcript tool."""
         self._client: MemoriesV2Client | None = None
+        self.default_max_wait_seconds = 90
+        self.max_wait_cap_seconds = 90
 
     @property
     def client(self) -> MemoriesV2Client:
@@ -286,8 +288,8 @@ Supports: YouTube, TikTok, Instagram, Twitter/X"""
                 "max_wait_seconds": {
                     "type": "number",
                     "description": "Max wait seconds if wait_for_completion=true. "
-                    "Default: 300 (5 minutes).",
-                    "default": 300,
+                    "Default: 90 (bounded for chat UX).",
+                    "default": 90,
                 },
                 "webhook_url": {
                     "type": "string",
@@ -296,6 +298,15 @@ Supports: YouTube, TikTok, Instagram, Twitter/X"""
             },
             "required": ["video_url"],
         }
+
+    def _is_short_form_url(self, platform: str, video_url: str) -> bool:
+        """Allow MAI on short-form surfaces by default."""
+        if platform in {"tiktok", "instagram"}:
+            return True
+        if platform == "youtube":
+            return "youtube.com/shorts/" in video_url.lower()
+        # Default deny for long-form/unknown surfaces (e.g., Twitter/X)
+        return False
 
     async def execute(self, **kwargs: Any) -> ToolResult:
         """Generate MAI transcript for a social media video.
@@ -311,7 +322,7 @@ Supports: YouTube, TikTok, Instagram, Twitter/X"""
         """
         video_url = kwargs.get("video_url")
         wait = kwargs.get("wait_for_completion", True)
-        max_wait = kwargs.get("max_wait_seconds", 300)
+        max_wait = kwargs.get("max_wait_seconds", self.default_max_wait_seconds)
         webhook_url = kwargs.get("webhook_url")
 
         if not video_url:
@@ -325,13 +336,25 @@ Supports: YouTube, TikTok, Instagram, Twitter/X"""
                     f"Unsupported platform URL: {video_url}. "
                     "Supported: YouTube, TikTok, Instagram, Twitter/X"
                 )
+            if not self._is_short_form_url(platform, video_url):
+                return ToolResult.fail(
+                    "MAI transcript is restricted to short-form videos by default "
+                    "(TikTok/Instagram/YouTube Shorts). For long-form content, use "
+                    "social_media_transcript or social_media_metadata."
+                )
+
+            try:
+                requested_wait = float(max_wait)
+            except (TypeError, ValueError):
+                requested_wait = float(self.default_max_wait_seconds)
+            effective_max_wait = max(1.0, min(requested_wait, float(self.max_wait_cap_seconds)))
 
             result = await self.client.get_mai_transcript(
                 video_url=video_url,
                 platform=platform,
                 wait=wait,
                 poll_interval=2.0,
-                max_wait=max_wait,
+                max_wait=effective_max_wait,
                 webhook_url=str(webhook_url) if webhook_url else None,
             )
 

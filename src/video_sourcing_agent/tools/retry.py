@@ -39,6 +39,9 @@ class RetryExecutor:
             # Instagram Apify 400/run-failed errors are typically malformed-input
             # or actor-level run failures; retries tend to stall completion.
             "instagram_search": 0,
+            # MAI transcript can block for minutes; retries risk exceeding
+            # OpenClaw skill timeout budgets.
+            "social_media_mai_transcript": 0,
         }
 
     async def execute_with_retry(
