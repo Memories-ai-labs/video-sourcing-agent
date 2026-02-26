@@ -142,7 +142,6 @@ def _compact_complete_payload(data: dict[str, Any]) -> dict[str, Any]:
         "video_references": data.get("video_references", []),
         "tools_used": data.get("tools_used", []),
         "steps_taken": data.get("steps_taken", 0),
-        "execution_time_seconds": data.get("execution_time_seconds", 0),
     }
 
 

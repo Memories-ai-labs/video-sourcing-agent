@@ -320,7 +320,7 @@ async def test_event_ordering_and_json_validity(monkeypatch: pytest.MonkeyPatch)
     assert "video_references" in complete
     assert "tools_used" in complete
     assert "steps_taken" in complete
-    assert "execution_time_seconds" in complete
+    assert "execution_time_seconds" not in complete
 
 
 @pytest.mark.asyncio
@@ -374,7 +374,6 @@ async def test_compact_vs_verbose_event_detail(monkeypatch: pytest.MonkeyPatch):
         "video_references",
         "tools_used",
         "steps_taken",
-        "execution_time_seconds",
     }
 
     verbose_out = StringIO()
