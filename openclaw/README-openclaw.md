@@ -110,6 +110,22 @@ Free-form:
 4. Use explicit command timeout (`exec.timeout: 420`) for long runs.
 5. If retrying manually, kill prior process session before starting a new run.
 
+## Typing indicator reliability
+
+To avoid sticky Telegram `typing...` indicators during long `/video_sourcing` runs:
+
+```bash
+openclaw config set agents.defaults.typingMode '"message"'
+openclaw config set agents.defaults.typingIntervalSeconds 6
+openclaw gateway restart
+```
+
+Expected behavior:
+
+1. Start/progress/final messages remain unchanged.
+2. Typing appears only when visible text is being emitted.
+3. Typing clears shortly after terminal output (typically within 5-8 seconds).
+
 ## Troubleshooting
 
 1. Missing `git` or `uv`
@@ -122,3 +138,7 @@ Free-form:
    - Restart OpenClaw Gateway after skill updates.
 5. Override path invalid
    - Ensure `VIDEO_SOURCING_AGENT_ROOT` points to a valid repository directory.
+6. Typing indicator remains stuck after terminal response
+   - Set `agents.defaults.typingMode` to `"message"` and restart the gateway.
+   - Fallback: `openclaw config set agents.defaults.typingMode '"never"'`.
+   - Rollback: unset typing keys with `openclaw config unset agents.defaults.typingMode` and `openclaw config unset agents.defaults.typingIntervalSeconds`.

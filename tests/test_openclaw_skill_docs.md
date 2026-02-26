@@ -13,7 +13,7 @@ Manual validation checklist for `video-sourcing` OpenClaw skill integration.
      - required API keys set
    - Send: `/video_sourcing Find trending UGC videos for SaaS this week`
    - Expect:
-     - Runner bootstraps `~/.openclaw/data/video-sourcing-agent/v0.2.0` on first run.
+     - Runner bootstraps `~/.openclaw/data/video-sourcing-agent/v0.2.3` on first run.
      - Query executes successfully.
 
 2. `/video_sourcing <query>` with local override runtime
@@ -38,6 +38,15 @@ Manual validation checklist for `video-sourcing` OpenClaw skill integration.
 
 5. Free-form non-strict behavior
    - Free-form query still routes correctly and emits natural progress/final response.
+
+6. Telegram typing indicator clears after terminal response
+   - Preconditions:
+     - `agents.defaults.typingMode` set to `"message"`
+     - `agents.defaults.typingIntervalSeconds` set to `6`
+   - Send: `/video_sourcing top trending videos about AI`
+   - Expect:
+     - Start/progress/final messages still arrive.
+     - Typing indicator clears promptly after terminal message (typically within 5-8 seconds).
 
 ## Channel matrix
 

@@ -114,6 +114,22 @@ Use this only if you want to run a local checkout instead of managed pinned runt
 
 Free-form behavior remains non-strict.
 
+## Typing indicator reliability
+
+To reduce sticky Telegram `typing...` indicators during long polling loops:
+
+```bash
+openclaw config set agents.defaults.typingMode '"message"'
+openclaw config set agents.defaults.typingIntervalSeconds 6
+openclaw gateway restart
+```
+
+Expected behavior:
+
+1. Start/progress/final messages still arrive normally.
+2. Typing appears when text is actively emitted.
+3. Typing clears shortly after terminal output (usually within 5-8 seconds).
+
 ## Troubleshooting
 
 1. `Required binary not found on PATH: git` or `uv`
@@ -124,3 +140,7 @@ Free-form behavior remains non-strict.
    - Confirm host can access GitHub and fetch tag `v0.2.3`.
 4. No progress updates shown
    - Restart gateway and verify channel stream mode settings.
+5. Typing indicator remains visible after final response
+   - Set `agents.defaults.typingMode` to `"message"` and restart the gateway.
+   - Fallback: `openclaw config set agents.defaults.typingMode '"never"'`.
+   - Rollback: `openclaw config unset agents.defaults.typingMode` and `openclaw config unset agents.defaults.typingIntervalSeconds`.

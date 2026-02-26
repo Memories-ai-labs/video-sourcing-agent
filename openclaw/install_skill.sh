@@ -30,5 +30,9 @@ Next steps:
 2. Ensure git and uv are installed on the OpenClaw host.
 3. Enable skills.entries["video-sourcing"].enabled=true in openclaw.json.
 4. Optional: set skills.entries["video-sourcing"].env.VIDEO_SOURCING_AGENT_ROOT to override managed bootstrap path.
-5. Use /video_sourcing <query> in your messaging channel.
+5. Recommended for Telegram typing reliability:
+   - openclaw config set agents.defaults.typingMode '"message"'
+   - openclaw config set agents.defaults.typingIntervalSeconds 6
+   - openclaw gateway restart
+6. Use /video_sourcing <query> in your messaging channel.
 EOF
