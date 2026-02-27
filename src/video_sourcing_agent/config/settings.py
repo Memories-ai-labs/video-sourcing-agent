@@ -20,7 +20,7 @@ class Settings(BaseSettings):
         validation_alias="GOOGLE_API_KEY",
     )
     gemini_model: str = Field(
-        default="gemini-3-flash-preview",
+        default="gemini-3.1-pro-preview",
         description="Gemini model to use",
         validation_alias="GEMINI_MODEL",
     )
